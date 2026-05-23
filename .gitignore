@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Build artifacts
+.next/
+dist/
+build/
+
+# Environment & secrets
+.env
+*.env.local
+
+# OS
+.DS_Store
+
+# Docker volumes (data persists in Docker, not git)
+pgdata/
+ollama_data/
+
+# IDE
+.idea/
+.vscode/
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Package locks are kept (deterministic builds)
+# !package-lock.json
+
+# OrthoFlow has its own repo — exclude to avoid duplication
+LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/
+
+# Repos with their own git history (manage separately)
+melanin-tech-website/
+music-catalogue-system/
+
+
+# Large files (exceed GitHub 100MB limit)
+StockPhotos/
+BusinessDocs/
+RaEnergy/
+*.zip
+*.PNG
+*.jpeg
+
+# Financial/business docs (keep local only)
+*.xlsx
+*.numbers
+*.pdf
+BusinessDocs/
+

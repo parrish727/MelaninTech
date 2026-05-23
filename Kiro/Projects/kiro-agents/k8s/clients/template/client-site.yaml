@@ -1,0 +1,123 @@
+# Client Site Template — fill in all {{PLACEHOLDER}} values via onboard-client.sh
+# Supports: nextjs | static
+# AWS migration: change ingressClassName to "alb" and add ALB annotations
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: client-{{SLUG}}
+  labels:
+    managed-by: melanin-tech
+    client: "{{SLUG}}"
+    site-type: "{{SITE_TYPE}}"
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site-config
+  namespace: client-{{SLUG}}
+data:
+  SITE_TYPE: "{{SITE_TYPE}}"
+  PORT: "3000"
+  DOMAIN: "{{DOMAIN}}"
+---
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: website
+  namespace: client-{{SLUG}}
+  labels:
+    app: website
+    client: "{{SLUG}}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: website
+  template:
+    metadata:
+      labels:
+        app: website
+    spec:
+      containers:
+        - name: website
+          image: "{{IMAGE}}"
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: site-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: website
+  namespace: client-{{SLUG}}
+spec:
+  selector:
+    app: website
+  ports:
+    - port: 80
+      targetPort: 3000
+---
+# ── Ingress (nginx — local/VPS) ───────────────────────────────────────────────
+# For AWS EKS: change ingressClassName to "alb" and swap annotations block
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: website
+  namespace: client-{{SLUG}}
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # AWS ALB swap — uncomment and remove nginx annotations above:
+    # alb.ingress.kubernetes.io/scheme: internet-facing
+    # alb.ingress.kubernetes.io/target-type: ip
+    # alb.ingress.kubernetes.io/certificate-arn: "{{ACM_CERT_ARN}}"
+spec:
+  ingressClassName: nginx
+  # AWS ALB swap: ingressClassName: alb
+  tls:
+    - hosts:
+        - "{{DOMAIN}}"
+        - "www.{{DOMAIN}}"
+      secretName: tls-{{SLUG}}
+  rules:
+    - host: "{{DOMAIN}}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  number: 80
+    - host: "www.{{DOMAIN}}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  number: 80

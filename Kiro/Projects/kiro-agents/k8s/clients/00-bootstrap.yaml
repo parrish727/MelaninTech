@@ -1,0 +1,72 @@
+# Bootstrap: nginx-ingress + cert-manager
+# Run once on a new cluster before onboarding any clients.
+#
+# Apply order:
+#   kubectl apply -f 00-bootstrap.yaml
+#   kubectl wait --namespace ingress-nginx \
+#     --for=condition=ready pod \
+#     --selector=app.kubernetes.io/component=controller \
+#     --timeout=120s
+
+# ── nginx Ingress Controller ──────────────────────────────────────────────────
+# Source: https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+# Pinned version — update intentionally.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+---
+# Full nginx-ingress install via Helm is preferred in production:
+#   helm upgrade --install ingress-nginx ingress-nginx \
+#     --repo https://kubernetes.github.io/ingress-nginx \
+#     --namespace ingress-nginx --create-namespace \
+#     --set controller.service.type=LoadBalancer
+#
+# For local kind cluster use NodePort:
+#   --set controller.service.type=NodePort
+#   --set controller.hostPort.enabled=true
+
+# ── cert-manager ─────────────────────────────────────────────────────────────
+# Install via Helm (recommended):
+#   helm upgrade --install cert-manager cert-manager \
+#     --repo https://charts.jetstack.io \
+#     --namespace cert-manager --create-namespace \
+#     --set crds.enabled=true
+#
+# Then apply this file for the ClusterIssuer:
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Replace with your email for expiry notifications
+    email: hello@melanin-tech.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+            # AWS EKS swap: ingressClassName: alb
+---
+# Staging issuer for testing (no rate limits)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: hello@melanin-tech.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

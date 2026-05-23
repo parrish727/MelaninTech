@@ -1,0 +1,218 @@
+# Melanin Technologies Website — Kubernetes Manifests
+# Environments: preview (3001), testing (3002), staging (3003), production (3000)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: melanin-website
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: website-src
+  namespace: melanin-website
+spec:
+  accessModes: [ReadWriteMany]
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── Preview ───────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preview-server
+  namespace: melanin-website
+  labels:
+    env: preview
+    managed-by: kiro-deploy-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: preview-server
+  template:
+    metadata:
+      labels:
+        app: preview-server
+    spec:
+      containers:
+        - name: preview-server
+          image: melanin-tech-website:latest
+          imagePullPolicy: Never
+          env:
+            - name: PORT
+              value: "3001"
+          ports:
+            - containerPort: 3001
+          volumeMounts:
+            - name: website-src
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: website-src
+          persistentVolumeClaim:
+            claimName: website-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: preview-server
+  namespace: melanin-website
+spec:
+  selector:
+    app: preview-server
+  type: NodePort
+  ports:
+    - port: 3001
+      nodePort: 30001
+---
+# ── Testing ───────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testing-server
+  namespace: melanin-website
+  labels:
+    env: testing
+    managed-by: kiro-deploy-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testing-server
+  template:
+    metadata:
+      labels:
+        app: testing-server
+    spec:
+      containers:
+        - name: testing-server
+          image: melanin-tech-website:latest
+          imagePullPolicy: Never
+          env:
+            - name: PORT
+              value: "3002"
+          ports:
+            - containerPort: 3002
+          volumeMounts:
+            - name: website-src
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: website-src
+          persistentVolumeClaim:
+            claimName: website-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testing-server
+  namespace: melanin-website
+spec:
+  selector:
+    app: testing-server
+  type: NodePort
+  ports:
+    - port: 3002
+      nodePort: 30002
+---
+# ── Staging ───────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: staging-server
+  namespace: melanin-website
+  labels:
+    env: staging
+    managed-by: kiro-deploy-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: staging-server
+  template:
+    metadata:
+      labels:
+        app: staging-server
+    spec:
+      containers:
+        - name: staging-server
+          image: melanin-tech-website:latest
+          imagePullPolicy: Never
+          env:
+            - name: PORT
+              value: "3003"
+          ports:
+            - containerPort: 3003
+          volumeMounts:
+            - name: website-src
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: website-src
+          persistentVolumeClaim:
+            claimName: website-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: staging-server
+  namespace: melanin-website
+spec:
+  selector:
+    app: staging-server
+  type: NodePort
+  ports:
+    - port: 3003
+      nodePort: 30003
+---
+# ── Production ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: production-server
+  namespace: melanin-website
+  labels:
+    env: production
+    managed-by: kiro-deploy-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: production-server
+  template:
+    metadata:
+      labels:
+        app: production-server
+    spec:
+      containers:
+        - name: production-server
+          image: melanin-tech-website:latest
+          imagePullPolicy: Never
+          env:
+            - name: PORT
+              value: "3000"
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: website-src
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: website-src
+          persistentVolumeClaim:
+            claimName: website-src
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: production-server
+  namespace: melanin-website
+spec:
+  selector:
+    app: production-server
+  type: NodePort
+  ports:
+    - port: 3000
+      nodePort: 30000

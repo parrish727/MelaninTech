@@ -1,0 +1,31 @@
+name: Enforce Agent Guardrails
+description: >
+  Validates that any changes to agent files, orchestrator logic, or docker config
+  do not violate the hard rules defined in agent-rules.md. Flags violations before
+  they reach production.
+
+trigger:
+  fileChanged:
+    patterns:
+      - "Projects/kiro-agents/agents/**/*.py"
+      - "Projects/kiro-agents/orchestrator/**/*.py"
+      - "Projects/kiro-agents/docker/docker-compose.yml"
+
+prompt: |
+  The following files were changed: {{changedFiles}}
+
+  Review the changes against the hard rules in `.kiro/steering/agent-rules.md`.
+  Check for:
+
+  1. **Destructive commands** — any use of DROP, DELETE, rm -rf, format, truncate without an explicit approval gate.
+  2. **Secret exposure** — any hardcoded API keys, passwords, tokens, or PII in code or logs.
+  3. **OpenAI model usage** — any model name starting with `openai/` being passed to an LLM call.
+  4. **Path traversal** — any file write targeting a path outside `/app/Projects`.
+  5. **Unapproved shell execution** — shell commands outside of `deploy` agent context.
+  6. **Missing heartbeat** — any new agent endpoint that doesn't call `heartbeat()` during long operations.
+  7. **Missing input validation** — any new FastAPI route missing Pydantic validation.
+  8. **Missing file path comment** — any code generation that doesn't include a `# path/to/file` comment on the first line of code blocks.
+
+  If violations are found, list them clearly with file name and line reference.
+  If no violations are found, respond: "✅ Guardrail check passed."
+  Do NOT auto-fix. Flag only.

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          env:
+            - name: POSTGRES_DB
+              value: kiro
+            - name: POSTGRES_USER
+              value: kiro
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secrets
+                  key: POSTGRES_PASSWORD
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: pgdata
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: melanin-tech
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          command: ["/bin/sh", "-c"]
+          args: ["ollama serve & sleep 5 && ollama pull nomic-embed-text && wait"]
+          ports:
+            - containerPort: 11434
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: ollama-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: melanin-tech
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434

@@ -1,0 +1,81 @@
+# AWS Migration Guide — EKS + ALB
+# Swap from local nginx-ingress to AWS ALB Ingress Controller.
+# Everything else (namespaces, deployments, services) stays identical.
+#
+# ── Step 1: Create EKS cluster ────────────────────────────────────────────────
+#   eksctl create cluster \
+#     --name melanin-tech \
+#     --region us-east-1 \
+#     --nodegroup-name standard \
+#     --node-type t3.medium \
+#     --nodes 2 --nodes-min 1 --nodes-max 4 \
+#     --managed
+#
+# ── Step 2: Install AWS Load Balancer Controller ──────────────────────────────
+#   helm repo add eks https://aws.github.io/eks-charts
+#   helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#     -n kube-system \
+#     --set clusterName=melanin-tech \
+#     --set serviceAccount.create=true \
+#     --set region=us-east-1 \
+#     --set vpcId=<YOUR_VPC_ID>
+#
+# ── Step 3: Install cert-manager (same as local) ──────────────────────────────
+#   helm upgrade --install cert-manager cert-manager \
+#     --repo https://charts.jetstack.io \
+#     --namespace cert-manager --create-namespace \
+#     --set crds.enabled=true
+#   kubectl apply -f 00-bootstrap.yaml   # ClusterIssuers only
+#
+# ── Step 4: Push images to ECR ────────────────────────────────────────────────
+#   aws ecr create-repository --repository-name client-{slug} --region us-east-1
+#   docker tag {image} {account}.dkr.ecr.us-east-1.amazonaws.com/client-{slug}:latest
+#   aws ecr get-login-password | docker login --username AWS --password-stdin {account}.dkr.ecr.us-east-1.amazonaws.com
+#   docker push {account}.dkr.ecr.us-east-1.amazonaws.com/client-{slug}:latest
+#
+# ── Step 5: Onboard clients (same script, different ingressClassName) ─────────
+#   Use onboard-client-aws.yaml template below instead of client-site.yaml
+
+---
+# EKS-ready Ingress — drop-in replacement for the nginx Ingress in client-site.yaml
+# Differences: ingressClassName=alb, ALB annotations, ACM cert instead of cert-manager TLS
+#
+# Usage: onboard-client.sh will use this automatically when --cloud aws is passed (future)
+# For now: manually swap the Ingress block in client-site.yaml with this.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: website
+  namespace: client-{{SLUG}}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # Provision cert in ACM first, then paste ARN here:
+    alb.ingress.kubernetes.io/certificate-arn: "{{ACM_CERT_ARN}}"
+    alb.ingress.kubernetes.io/healthcheck-path: /
+spec:
+  ingressClassName: alb
+  rules:
+    - host: "{{DOMAIN}}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  number: 80
+    - host: "www.{{DOMAIN}}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: website
+                port:
+                  number: 80

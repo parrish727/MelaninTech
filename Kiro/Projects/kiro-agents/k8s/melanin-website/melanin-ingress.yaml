@@ -1,0 +1,42 @@
+# Melanin Technologies — own domain ingress
+# This is the reference implementation: we host ourselves the same way we host clients.
+# Domain: melanin-tech.com (replace with actual domain)
+#
+# Apply: kubectl apply -f melanin-ingress.yaml
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: melanin-website
+  namespace: melanin-website
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - melanin-tech.com
+        - www.melanin-tech.com
+      secretName: tls-melanin-website
+  rules:
+    - host: melanin-tech.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: production-server
+                port:
+                  number: 3000
+    - host: www.melanin-tech.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: production-server
+                port:
+                  number: 3000

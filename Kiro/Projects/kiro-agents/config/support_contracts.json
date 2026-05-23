@@ -1,0 +1,12 @@
+{
+  "client-a": {
+    "type": "post_launch",
+    "launch_date": "2026-04-03T00:00:00+00:00",
+    "expires_at": "2026-07-02T00:00:00+00:00"
+  },
+  "client-b": {
+    "type": "usage",
+    "tickets_limit": 20,
+    "tickets_used": 0
+  }
+}

@@ -1,0 +1,405 @@
+networks:
+  agent-net:
+    driver: bridge
+
+x-agent: &agent-base
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.agent
+  env_file: ../.env
+  environment:
+    - PROJECTS_BASE=/app/Projects
+  networks:
+    - agent-net
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: kiro
+      POSTGRES_USER: kiro
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - agent-net
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    networks:
+      - agent-net
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull nomic-embed-text && wait"]
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file: ../.env
+    environment:
+      - HOST_COMPOSE_FILE=/Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker/docker-compose.yml
+      - HOST_ENV_FILE=/Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env
+      - HOST_WEBSITE_PATH=/Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      - PYTHONUNBUFFERED=1
+    networks:
+      - agent-net
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/config:/app/config
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env:/app/.env:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website/public/previews:/app/previews
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+      - ollama
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "uvicorn", "orchestrator.mcp_server:app", "--host", "0.0.0.0", "--port", "9000"]
+    env_file: ../.env
+    environment:
+      - PROJECTS_BASE=/app/Projects
+    networks:
+      - agent-net
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:ro
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  preview-server:
+    build:
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+    restart: unless-stopped
+    labels:
+      - "managed-by=kiro-deploy-agent"
+
+  testing-server:
+    build:
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+    restart: unless-stopped
+    labels:
+      - "managed-by=kiro-deploy-agent"
+      - "env=testing"
+
+  staging-server:
+    build:
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+    restart: unless-stopped
+    labels:
+      - "managed-by=kiro-deploy-agent"
+      - "env=staging"
+
+  production-server:
+    build:
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    restart: unless-stopped
+    labels:
+      - "managed-by=kiro-deploy-agent"
+      - "env=production"
+
+  # --- Public-facing infrastructure ---
+
+  # Melanin Tech HUD — internal monitoring dashboard
+  hud:
+    build:
+      context: ../hud/backend
+      dockerfile: Dockerfile
+    env_file: ../.env
+    environment:
+      - POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro
+    networks:
+      - agent-net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  hud-frontend:
+    build:
+      context: ../hud/frontend
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "4000:4000"
+    depends_on:
+      - hud
+    restart: unless-stopped
+
+  # Cloudflare DDNS — keeps melanintech.com A record pointed at current home IP
+  cloudflare-ddns:
+    image: favonia/cloudflare-ddns:1.15.0
+    network_mode: host
+    env_file: ../.env
+    restart: unless-stopped
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CF_API_TOKEN}
+      DOMAINS: melanin-tech.com,www.melanin-tech.com,hud.melanin-tech.com,orthoflowsolutions.com,www.orthoflowsolutions.com,app.orthoflowsolutions.com,api.orthoflowsolutions.com
+      PROXIED: "false"
+      UPDATE_CRON: "@every 5m"
+
+  # nginx reverse proxy — TLS termination + security hardening
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/melanintech.conf:/etc/nginx/conf.d/melanintech.conf:ro
+      - ./nginx/orthoflow.conf:/etc/nginx/conf.d/orthoflow.conf:ro
+      - ./nginx/hud.conf:/etc/nginx/conf.d/hud.conf:ro
+      - ./nginx/proxy_params:/etc/nginx/proxy_params:ro
+      - certbot-www:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    networks:
+      - agent-net
+    depends_on:
+      - production-server
+    restart: unless-stopped
+
+  # certbot — obtains and renews Let's Encrypt TLS cert
+  certbot:
+    image: certbot/certbot:v2.11.0
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: >
+      sh -c "trap exit TERM;
+             while :; do
+               certbot renew --webroot -w /var/www/certbot --quiet;
+               sleep 12h & wait $${!};
+             done"
+    restart: unless-stopped
+
+  # fail2ban — bans IPs with repeated bad requests
+  fail2ban:
+    image: crazymax/fail2ban:1.1.0
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./fail2ban:/data
+      - /var/log:/var/log:ro
+    environment:
+      - TZ=America/New_York
+      - F2B_LOG_LEVEL=INFO
+      - F2B_DB_PURGE_AGE=1d
+    restart: unless-stopped
+
+
+  # cert expiry monitor — checks daily, Slack alert 30 days before expiry
+  cert-monitor:
+    image: alpine/openssl:latest
+    volumes:
+      - certbot-certs:/etc/letsencrypt:ro
+      - ./scripts/check-cert-expiry.sh:/check.sh:ro
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_CHANNEL_ID=${SLACK_CHANNEL_ID}
+    entrypoint: >
+      sh -c "apk add --no-cache curl > /dev/null 2>&1;
+             while true; do sh /check.sh; sleep 86400; done"
+    restart: unless-stopped
+
+  scaffold-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.scaffold_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+
+  qa-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.qa_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend:ro
+
+  backend-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.backend_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend:rw
+
+  frontend-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.frontend_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - MELANIN_WEBSITE_PATH=/app/melanin-tech-website
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend:rw
+
+  uxui-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.uxui_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - MELANIN_WEBSITE_PATH=/app/melanin-tech-website
+      - PLAYWRIGHT_MCP_URL=http://playwright-mcp:9001
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:rw
+
+  playwright-mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.playwright
+    networks:
+      - agent-net
+    ports:
+      - "9001:9001"
+    volumes:
+      - playwright_screenshots:/screenshots
+    restart: unless-stopped
+
+  deploy-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.deploy
+    env_file: ../.env
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - COMPOSE_FILE=/app/docker/docker-compose.yml
+      - COMPOSE_ENV=/app/.env
+    networks:
+      - agent-net
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env:/app/.env:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  support-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.support_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+
+  # --- MCP Sidecars ---
+  mcp-github:
+    image: ghcr.io/github/github-mcp-server:latest
+    command: ["http", "--port", "9010", "--toolsets", "default,git,gists,notifications"]
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  mcp-postgres:
+    image: node:22-slim
+    env_file: ../.env
+    command: >
+      sh -c "npx -y supergateway --port 9011 --stdio 'npx -y @modelcontextprotocol/server-postgres $$POSTGRES_DSN'"
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  mcp-figma:
+    image: node:22-slim
+    env_file: ../.env
+    command: >
+      sh -c "npx -y figma-developer-mcp --figma-api-key=$$FIGMA_ACCESS_TOKEN --port=9012"
+    environment:
+      - MCP_TRANSPORT=sse
+      - PORT=9012
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  mcp-fetch:
+    image: python:3.11-slim
+    command: >
+      sh -c "pip install -q mcp-server-fetch && python -m mcp_server_fetch"
+    networks:
+      - agent-net
+    restart: "no"
+
+  darius-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.darius
+    env_file: ../.env
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - MCP_URL=http://mcp-server:9000
+      - DARIUS_MODEL=anthropic/claude-sonnet-4-6
+    networks:
+      - agent-net
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+    restart: unless-stopped
+
+  # --- Utility Agents ---
+  code-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.code_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/CodeAgent:/app/Projects/CodeAgent:ro
+
+  file-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.file_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/FileAgent:/app/Projects/FileAgent:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/FileAgent/output:/app/Projects/FileAgent/output:rw
+
+volumes:
+  pgdata:
+  ollama_data:
+  playwright_screenshots:
+  certbot-www:
+  certbot-certs:

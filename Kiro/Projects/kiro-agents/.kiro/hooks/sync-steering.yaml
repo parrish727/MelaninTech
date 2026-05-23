@@ -1,0 +1,32 @@
+name: Sync Agent Skills & Steering
+description: >
+  Keeps agent-skills.md and agent-rules.md in sync whenever agent capabilities,
+  model selection, routing logic, or guardrail-relevant code changes.
+
+trigger:
+  fileChanged:
+    patterns:
+      - "Projects/kiro-agents/agents/**/*.py"
+      - "Projects/kiro-agents/orchestrator/router.py"
+      - "Projects/kiro-agents/orchestrator/watchdog.py"
+      - "Projects/kiro-agents/orchestrator/contracts.py"
+      - "Projects/kiro-agents/agents/base_agent.py"
+
+prompt: |
+  The following files were changed: {{changedFiles}}
+
+  Review the changes and update the relevant steering docs if needed:
+
+  1. **.kiro/steering/agent-skills.md** — Update if:
+     - A new agent was added or removed
+     - An agent's capabilities changed (new actions, new output formats)
+     - Model selection logic changed (new tiers, new model names)
+     - Routing classification keywords changed
+
+  2. **.kiro/steering/agent-rules.md** — Update if:
+     - New hard rules are implied by the code changes (e.g. new timeout values, new path restrictions)
+     - Watchdog retry limits or timeout values changed
+     - Contract enforcement logic changed
+
+  Make minimal, precise edits. Do not rewrite sections that are still accurate.
+  Always reflect the actual code — do not add aspirational rules that aren't enforced.

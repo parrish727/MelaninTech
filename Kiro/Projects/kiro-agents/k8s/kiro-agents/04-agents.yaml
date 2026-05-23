@@ -1,0 +1,483 @@
+# Shared env template for all agents
+# Each agent gets envFrom: agent-secrets + its own env overrides
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: docker-orchestrator:latest
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+            - name: website
+              mountPath: /app/melanin-tech-website
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+        - name: website
+          persistentVolumeClaim:
+            claimName: website-data
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+---
+# ── Delivery Agents ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scaffold-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scaffold-agent
+  template:
+    metadata:
+      labels:
+        app: scaffold-agent
+    spec:
+      containers:
+        - name: scaffold-agent
+          image: docker-scaffold-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.scaffold_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scaffold-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: scaffold-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-agent
+  template:
+    metadata:
+      labels:
+        app: backend-agent
+    spec:
+      containers:
+        - name: backend-agent
+          image: docker-backend-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.backend_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: backend-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend-agent
+  template:
+    metadata:
+      labels:
+        app: frontend-agent
+    spec:
+      containers:
+        - name: frontend-agent
+          image: docker-frontend-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.frontend_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+            - name: MELANIN_WEBSITE_PATH
+              value: /app/melanin-tech-website
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+            - name: website
+              mountPath: /app/melanin-tech-website
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+        - name: website
+          persistentVolumeClaim:
+            claimName: website-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: frontend-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uxui-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: uxui-agent
+  template:
+    metadata:
+      labels:
+        app: uxui-agent
+    spec:
+      containers:
+        - name: uxui-agent
+          image: docker-uxui-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.uxui_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+            - name: MELANIN_WEBSITE_PATH
+              value: /app/melanin-tech-website
+            - name: PLAYWRIGHT_MCP_URL
+              value: http://playwright-mcp:9001
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+            - name: website
+              mountPath: /app/melanin-tech-website
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+        - name: website
+          persistentVolumeClaim:
+            claimName: website-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uxui-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: uxui-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deploy-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deploy-agent
+  template:
+    metadata:
+      labels:
+        app: deploy-agent
+    spec:
+      containers:
+        - name: deploy-agent
+          image: docker-deploy-agent:latest
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deploy-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: deploy-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: support-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: support-agent
+  template:
+    metadata:
+      labels:
+        app: support-agent
+    spec:
+      containers:
+        - name: support-agent
+          image: docker-support-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.support_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+              readOnly: true
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: support-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: support-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-agent
+  template:
+    metadata:
+      labels:
+        app: code-agent
+    spec:
+      containers:
+        - name: code-agent
+          image: docker-code-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.code_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: code-agent
+  ports:
+    - port: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: file-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: file-agent
+  template:
+    metadata:
+      labels:
+        app: file-agent
+    spec:
+      containers:
+        - name: file-agent
+          image: docker-file-agent:latest
+          imagePullPolicy: Never
+          command: ["python", "-m", "uvicorn", "agents.file_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: file-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: file-agent
+  ports:
+    - port: 8000
+---
+# ── Darius Agent ──────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: darius-agent
+  namespace: melanin-tech
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: darius-agent
+  template:
+    metadata:
+      labels:
+        app: darius-agent
+    spec:
+      containers:
+        - name: darius-agent
+          image: docker-darius-agent:latest
+          imagePullPolicy: Never
+          envFrom:
+            - secretRef:
+                name: agent-secrets
+          env:
+            - name: PROJECTS_BASE
+              value: /app/Projects
+            - name: MCP_URL
+              value: http://mcp-server:9000
+            - name: DARIUS_MODEL
+              value: anthropic/claude-sonnet-4-6
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: projects
+              mountPath: /app/Projects
+      volumes:
+        - name: projects
+          persistentVolumeClaim:
+            claimName: projects-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: darius-agent
+  namespace: melanin-tech
+spec:
+  selector:
+    app: darius-agent
+  ports:
+    - port: 8000

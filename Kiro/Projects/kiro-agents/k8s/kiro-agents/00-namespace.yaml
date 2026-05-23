@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: melanin-tech
+---
+# Secrets — populate with: kubectl create secret generic agent-secrets -n melanin-tech \
+#   --from-literal=ANTHROPIC_API_KEY=... \
+#   --from-literal=SLACK_BOT_TOKEN=... \
+#   --from-literal=SLACK_APP_TOKEN=... \
+#   --from-literal=SLACK_SIGNING_SECRET=... \
+#   --from-literal=SLACK_CHANNEL_ID=... \
+#   --from-literal=POSTGRES_PASSWORD=kiro_secret \
+#   --from-literal=POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro \
+#   --from-literal=GITHUB_TOKEN=... \
+#   --from-literal=FIGMA_ACCESS_TOKEN=... \
+#   --from-literal=FIGMA_FILE_ID=...
