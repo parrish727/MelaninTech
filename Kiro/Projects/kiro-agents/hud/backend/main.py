@@ -211,6 +211,27 @@ def health():
     return {"status": "ok", "service": "melanin-tech-hud"}
 
 
+# ── Costs ─────────────────────────────────────────────────────────────────────
+@app.get("/api/costs", dependencies=[Depends(verify_token)])
+def costs():
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Total spend
+    cur.execute("SELECT COALESCE(SUM(cost_usd), 0) as total FROM llm_usage")
+    total = cur.fetchone()["total"]
+    # By model
+    cur.execute("SELECT model, SUM(cost_usd) as cost, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, COUNT(*) as calls FROM llm_usage GROUP BY model ORDER BY cost DESC")
+    by_model = cur.fetchall()
+    # By agent
+    cur.execute("SELECT agent, SUM(cost_usd) as cost, COUNT(*) as calls FROM llm_usage GROUP BY agent ORDER BY cost DESC")
+    by_agent = cur.fetchall()
+    # Last 7 days daily
+    cur.execute("SELECT DATE(created_at) as day, SUM(cost_usd) as cost FROM llm_usage WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY day")
+    daily = cur.fetchall()
+    conn.close()
+    return {"total_usd": round(total, 4), "by_model": by_model, "by_agent": by_agent, "daily": daily}
+
+
 # ── Darius ────────────────────────────────────────────────────────────────────
 @app.get("/api/darius", dependencies=[Depends(verify_token)])
 def darius():
@@ -254,6 +275,20 @@ def memory():
     return {"task_memory": task_mem, "conversation_memory": conv_mem, "task_count": task_count, "conv_count": conv_count}
 
 
+@app.get("/api/memory/search", dependencies=[Depends(verify_token)])
+def memory_search(q: str = ""):
+    """Semantic search across task memory."""
+    if not q:
+        return {"results": []}
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Text search fallback (semantic search requires embedding)
+    cur.execute("SELECT id, task, agent, decision, created_at FROM task_memory WHERE task ILIKE %s ORDER BY created_at DESC LIMIT 10", (f"%{q}%",))
+    results = cur.fetchall()
+    conn.close()
+    return {"query": q, "results": results}
+
+
 # ── Projects ──────────────────────────────────────────────────────────────────
 @app.get("/api/projects", dependencies=[Depends(verify_token)])
 def projects():
@@ -288,13 +323,25 @@ def security():
         results["cert_expiry"] = r.stdout.strip().replace("notAfter=", "") if r.returncode == 0 else "unknown"
     except Exception:
         results["cert_expiry"] = "unable to check"
-    # Fail2ban (check if running)
+    # Fail2ban status + ban list
     try:
         client = docker.from_env()
         f2b = client.containers.get("docker-fail2ban-1")
         results["fail2ban"] = f2b.status
+        # Get banned IPs
+        try:
+            exit_code, output = f2b.exec_run("fail2ban-client status nginx-limit-req")
+            if exit_code == 0:
+                lines = output.decode().split("\n")
+                ban_line = [l for l in lines if "Banned IP" in l or "banned" in l.lower()]
+                results["banned_ips"] = ban_line[0].strip() if ban_line else "0 banned"
+            else:
+                results["banned_ips"] = "unable to query"
+        except Exception:
+            results["banned_ips"] = "unable to query"
     except Exception:
         results["fail2ban"] = "not found"
+        results["banned_ips"] = "n/a"
     results["npm_audit"] = "last run: see CI"
     return results
 
@@ -302,18 +349,66 @@ def security():
 # ── Clients ───────────────────────────────────────────────────────────────────
 @app.get("/api/clients", dependencies=[Depends(verify_token)])
 def clients():
-    """OrthoFlow client accounts — respects separation (shows metadata only, not client data)."""
+    """OrthoFlow client accounts — metadata + usage metrics."""
     try:
         import psycopg2 as pg2
         conn = pg2.connect(os.environ.get("ORTHOFLOW_DSN", "postgresql://orthoflow:changeme@host.docker.internal:5433/orthoflow"))
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT id, name, created_at FROM practices ORDER BY created_at DESC")
         practices = cur.fetchall()
-        cur.execute("SELECT practice_id, COUNT(*) as invoice_count FROM invoices GROUP BY practice_id")
-        invoice_counts = {str(r["practice_id"]): r["invoice_count"] for r in cur.fetchall()}
+        cur.execute("SELECT practice_id, COUNT(*) as invoice_count, SUM(total_amount) as total_spend FROM invoices GROUP BY practice_id")
+        usage = {str(r["practice_id"]): {"invoices": r["invoice_count"], "spend": float(r["total_spend"] or 0)} for r in cur.fetchall()}
         conn.close()
         for p in practices:
-            p["invoice_count"] = invoice_counts.get(str(p["id"]), 0)
+            u = usage.get(str(p["id"]), {"invoices": 0, "spend": 0})
+            p["invoice_count"] = u["invoices"]
+            p["total_spend"] = round(u["spend"], 2)
         return {"clients": practices}
     except Exception as e:
         return {"clients": [], "error": str(e)}
+
+
+# ── Container Health Alerting ─────────────────────────────────────────────────
+import threading
+import httpx as _httpx
+
+_SLACK_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
+_SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL_ID", "")
+_alerted: set = set()
+
+
+def _check_containers():
+    """Background thread: check container health every 60s, alert on failures."""
+    import time
+    while True:
+        time.sleep(60)
+        try:
+            client = docker.from_env()
+            for c in client.containers.list(all=True):
+                if not c.name.startswith("docker-") and not c.name.startswith("orthoflow-"):
+                    continue
+                if c.status in ("exited", "dead") and c.name not in _alerted:
+                    _alerted.add(c.name)
+                    _send_alert(f"🚨 *Container Down:* `{c.name}` — status: {c.status}")
+                elif c.status == "running" and c.name in _alerted:
+                    _alerted.discard(c.name)
+        except Exception:
+            pass
+
+
+def _send_alert(message: str):
+    if not _SLACK_TOKEN or not _SLACK_CHANNEL:
+        return
+    try:
+        _httpx.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {_SLACK_TOKEN}", "Content-Type": "application/json"},
+            json={"channel": _SLACK_CHANNEL, "text": message},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+# Start health monitor in background
+threading.Thread(target=_check_containers, daemon=True).start()

@@ -155,7 +155,30 @@ def select_model(task_text: str) -> str:
     return model
 
 
+def _log_usage(agent: str, model: str, project: str, input_tokens: int, output_tokens: int):
+    """Log LLM usage to database for cost tracking."""
+    # Cost per 1M tokens (approximate)
+    costs = {
+        "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+        "claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25},
+        "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+    }
+    rate = costs.get(model, {"input": 3.0, "output": 15.0})
+    cost = (input_tokens * rate["input"] / 1_000_000) + (output_tokens * rate["output"] / 1_000_000)
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro"))
+        cur = conn.cursor()
+        cur.execute("INSERT INTO llm_usage (agent, model, project, input_tokens, output_tokens, cost_usd) VALUES (%s,%s,%s,%s,%s,%s)",
+                    (agent, model, project, input_tokens, output_tokens, cost))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 8096) -> str:
+    input_est = len(system_prompt + task_text) // 4  # rough token estimate
     if _PROVIDER == "openrouter":
         response = _client.chat.completions.create(
             model=model,
@@ -166,7 +189,10 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
             ],
             extra_headers={"X-Title": "Melanin Technologies"},
         )
-        return response.choices[0].message.content
+        output = response.choices[0].message.content
+        output_est = len(output) // 4
+        _log_usage("agent", model, "default", input_est, output_est)
+        return output
     else:
         message = _anthropic_client.messages.create(
             model=model,
@@ -174,7 +200,9 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
             system=system_prompt,
             messages=[{"role": "user", "content": task_text}],
         )
-        return message.content[0].text
+        output = message.content[0].text
+        _log_usage("agent", model, "default", message.usage.input_tokens, message.usage.output_tokens)
+        return output
 
 
 def create_app(agent_name: str, system_prompt: str, handle_task_fn):
