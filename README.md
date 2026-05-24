@@ -1,2 +1,0 @@
-# MelaninTech
-Melanin Technologies Inc.

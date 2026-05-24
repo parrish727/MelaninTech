@@ -54,3 +54,17 @@ RaEnergy/
 *.pdf
 BusinessDocs/
 
+
+# SENSITIVE — never commit
+MetaMask/
+GDSM/
+CreditCards/
+RaEnergy*/
+A.I./
+*.JPG
+*.HEIC
+*.crdownload
+*.swp
+*2.md
+*2.html
+
