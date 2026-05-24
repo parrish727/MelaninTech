@@ -211,6 +211,73 @@ def health():
     return {"status": "ok", "service": "melanin-tech-hud"}
 
 
+# ── Health History ────────────────────────────────────────────────────────────
+@app.get("/api/health/history", dependencies=[Depends(verify_token)])
+def health_history(hours: int = 24):
+    """Get health snapshots for graphing."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM health_snapshots WHERE created_at > NOW() - INTERVAL '%s hours' ORDER BY created_at", (hours,))
+    snapshots = cur.fetchall()
+    conn.close()
+    return {"snapshots": snapshots, "hours": hours}
+
+
+# ── WebSocket Live Updates ────────────────────────────────────────────────────
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+import json as _json
+
+_ws_clients: list[WebSocket] = []
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    _ws_clients.append(websocket)
+    try:
+        while True:
+            # Send live data every 10 seconds
+            try:
+                data = _get_live_data()
+                await websocket.send_text(_json.dumps(data))
+            except Exception:
+                break
+            await asyncio.sleep(10)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _ws_clients.remove(websocket)
+
+
+def _get_live_data() -> dict:
+    """Get current system state for WebSocket push."""
+    try:
+        client = docker.from_env()
+        our = [c for c in client.containers.list(all=True) if c.name.startswith("docker-") or c.name.startswith("orthoflow-")]
+        running = len([c for c in our if c.status == "running"])
+        total = len(our)
+    except Exception:
+        running, total = 0, 0
+
+    try:
+        conn = psycopg2.connect(_DSN)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM tickets WHERE status IN ('open','in_progress')")
+        open_tickets = cur.fetchone()[0]
+        conn.close()
+    except Exception:
+        open_tickets = 0
+
+    return {
+        "type": "live",
+        "containers_running": running,
+        "containers_total": total,
+        "open_tickets": open_tickets,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 # ── Costs ─────────────────────────────────────────────────────────────────────
 @app.get("/api/costs", dependencies=[Depends(verify_token)])
 def costs():
@@ -378,20 +445,41 @@ _alerted: set = set()
 
 
 def _check_containers():
-    """Background thread: check container health every 60s, alert on failures."""
+    """Background thread: check container health every 60s, alert on failures, store snapshots."""
     import time
     while True:
         time.sleep(60)
         try:
             client = docker.from_env()
-            for c in client.containers.list(all=True):
-                if not c.name.startswith("docker-") and not c.name.startswith("orthoflow-"):
-                    continue
+            all_containers = client.containers.list(all=True)
+            our_containers = [c for c in all_containers if c.name.startswith("docker-") or c.name.startswith("orthoflow-")]
+            running = [c for c in our_containers if c.status == "running"]
+
+            # Alert on failures
+            for c in our_containers:
                 if c.status in ("exited", "dead") and c.name not in _alerted:
                     _alerted.add(c.name)
                     _send_alert(f"🚨 *Container Down:* `{c.name}` — status: {c.status}")
                 elif c.status == "running" and c.name in _alerted:
                     _alerted.discard(c.name)
+
+            # Store health snapshot every 5 minutes
+            if int(time.time()) % 300 < 60:
+                try:
+                    conn = psycopg2.connect(_DSN)
+                    cur = conn.cursor()
+                    cur.execute("SELECT COUNT(*) FROM task_memory")
+                    mem = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM tickets WHERE status='open'")
+                    t_open = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM tickets WHERE status='done'")
+                    t_done = cur.fetchone()[0]
+                    cur.execute("INSERT INTO health_snapshots (containers_running, containers_total, memory_entries, tickets_open, tickets_done) VALUES (%s,%s,%s,%s,%s)",
+                                (len(running), len(our_containers), mem, t_open, t_done))
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass
         except Exception:
             pass
 

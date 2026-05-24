@@ -41,7 +41,7 @@ function App() {
     setExtra({ darius: dar, projects: proj, tickets: tix, memory: mem, security: sec, clients: cli })
   }
 
-  useEffect(() => { if (token) { load(); const i = setInterval(load, 30000); return () => clearInterval(i) } }, [token])
+  useEffect(() => { if (token) { load(); const ws = new WebSocket(`ws://${window.location.host}/api/ws`); ws.onmessage = (e) => { try { const d = JSON.parse(e.data); if (d.type === 'live') setData((prev: any) => prev ? {...prev, containers_running: d.containers_running} : prev) } catch {} }; return () => ws.close() } }, [token])
 
   if (!token) return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
