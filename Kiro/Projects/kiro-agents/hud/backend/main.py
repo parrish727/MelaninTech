@@ -477,7 +477,7 @@ def _check_containers():
                     cur.execute("INSERT INTO health_snapshots (containers_running, containers_total, memory_entries, tickets_open, tickets_done) VALUES (%s,%s,%s,%s,%s)",
                                 (len(running), len(our_containers), mem, t_open, t_done))
                     # Purge snapshots older than 90 days
-                    cur.execute("DELETE FROM health_snapshots WHERE created_at < NOW() - INTERVAL '90 days'")
+                    cur.execute("DELETE FROM health_snapshots WHERE created_at < NOW() - INTERVAL '365 days'")
                     conn.commit()
                     conn.close()
                 except Exception:
