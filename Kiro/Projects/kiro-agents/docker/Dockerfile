@@ -19,5 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY config/ ./config/
 COPY orchestrator/ ./orchestrator/
 COPY agents/ ./agents/
+COPY templates/ ./templates/
+
+RUN useradd -r -u 1000 darius && chown -R darius /app
+USER darius
 
 CMD ["python", "-m", "orchestrator.main"]

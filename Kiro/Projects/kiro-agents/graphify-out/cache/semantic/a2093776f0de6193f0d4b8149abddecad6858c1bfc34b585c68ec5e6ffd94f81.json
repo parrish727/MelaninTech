@@ -1,0 +1,1 @@
+{"nodes": [{"id": "k8s_namespace", "label": "K8s Namespace (melanin-tech)", "file_type": "code", "source_file": "k8s/kiro-agents/00-namespace.yaml", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [], "hyperedges": []}

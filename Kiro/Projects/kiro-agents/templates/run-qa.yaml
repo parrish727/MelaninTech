@@ -1,0 +1,29 @@
+name: Run QA Suite
+trigger: run-qa
+description: Full QA pass on a project — code review, security scan, visual check
+params:
+  project:
+    required: true
+    description: Project to QA
+
+steps:
+  - id: code-review
+    type: agent
+    agent: qa
+    task: "Review recent changes in {{project}} for code quality, type safety, and security issues"
+    project: "{{project}}"
+    approve: false
+
+  - id: security-scan
+    type: agent
+    agent: qa
+    task: "Run security review on {{project}} — check for secrets, injection vulnerabilities, path traversal, and HIPAA compliance"
+    project: "{{project}}"
+    approve: false
+    depends_on: code-review
+
+  - id: report
+    type: darius
+    task: "Summarize QA findings for {{project}} and recommend priority fixes"
+    depends_on: security-scan
+    approve: true

@@ -8,7 +8,7 @@ Endpoints:
 """
 import uvicorn
 from fastapi import FastAPI
-from AI.darius.agent import run_task, chain_tasks
+from AI.darius.agent import run_task, chain_tasks, run_template
 from AI.darius.memory import list_sessions, load_session
 
 app = FastAPI(title="Darius Agent")
@@ -59,6 +59,28 @@ def chain(body: dict):
 @app.get("/health")
 def health():
     return {"status": "ok", "agent": "DariusAgent", "version": "1.1"}
+
+
+@app.post("/template")
+def template(body: dict):
+    """Execute a YAML workflow template.
+    Body: {"trigger": "deploy-website", "params": {"project": "melanin-tech-website"}}
+    """
+    trigger = body.get("trigger", "")
+    params = body.get("params", {})
+
+    if not trigger:
+        return {"error": "No trigger provided"}
+
+    results = run_template(trigger, params, session_id=body.get("session_id"))
+
+    return {
+        "agent": "DariusAgent",
+        "action": "template",
+        "template": trigger,
+        "steps": len(results),
+        "results": results,
+    }
 
 
 @app.get("/status")

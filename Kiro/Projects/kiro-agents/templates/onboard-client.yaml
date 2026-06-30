@@ -1,0 +1,50 @@
+name: Onboard Client
+trigger: onboard-client
+description: Full client onboarding pipeline — scaffold, configure, deploy, verify
+params:
+  slug:
+    required: true
+    description: Client slug (e.g., acme)
+  domain:
+    required: true
+    description: Client domain (e.g., acme.com)
+  site_type:
+    default: nextjs
+    description: Site type (nextjs or static)
+
+steps:
+  - id: scaffold
+    type: agent
+    agent: scaffold
+    task: "Scaffold a new {{site_type}} project for client '{{slug}}' at domain {{domain}}"
+    project: "{{slug}}"
+    approve: true
+
+  - id: k8s-namespace
+    type: agent
+    agent: deploy
+    task: "Create K8s namespace for client-{{slug}} with domain {{domain}} using onboard-client.sh --slug {{slug}} --domain {{domain}} --type {{site_type}}"
+    project: "{{slug}}"
+    approve: true
+    depends_on: scaffold
+
+  - id: dns-check
+    type: approve
+    message: "Has the DNS A record for {{domain}} been created in Cloudflare pointing to our IP?"
+    depends_on: k8s-namespace
+
+  - id: deploy-initial
+    type: agent
+    agent: deploy
+    task: "Build and deploy client-{{slug}} to their namespace"
+    project: "{{slug}}"
+    approve: true
+    depends_on: dns-check
+
+  - id: verify
+    type: agent
+    agent: qa
+    task: "Verify https://{{domain}} is live, TLS valid, and serving content"
+    project: "{{slug}}"
+    approve: false
+    depends_on: deploy-initial

@@ -148,6 +148,29 @@ def on_skip_production(ack, body, action):
     app.client.chat_postMessage(channel=SLACK_CHANNEL_ID, text="⏭️ Production deploy skipped.")
 
 
+@app.action("security_kill_switch_approve")
+def on_kill_switch_approve(ack, body, action):
+    ack()
+    import subprocess
+    result = subprocess.run(
+        ["python3", "scripts/vault_sync.py", "--lock", "Approved via Slack security alert"],
+        capture_output=True, text=True, cwd="/app"
+    )
+    app.client.chat_postMessage(
+        channel=SLACK_CHANNEL_ID,
+        text="🔴 *Kill Switch Engaged* — `.env` wiped. Services will lose credentials on next restart.\nTo restore: `python3 scripts/vault_sync.py --unlock`"
+    )
+
+
+@app.action("security_kill_switch_dismiss")
+def on_kill_switch_dismiss(ack, body, action):
+    ack()
+    app.client.chat_postMessage(
+        channel=SLACK_CHANNEL_ID,
+        text="✅ Security alert dismissed — classified as false positive. Monitoring continues."
+    )
+
+
 @app.view_submission("modify_submit")
 def on_modify_submit(ack, body, view, say):
     handle_modify_submit(ack, body, view, say, app)

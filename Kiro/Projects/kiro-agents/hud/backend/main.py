@@ -502,3 +502,383 @@ def _send_alert(message: str):
 
 # Start health monitor in background
 threading.Thread(target=_check_containers, daemon=True).start()
+
+
+# ── Contracts Tab ─────────────────────────────────────────────────────────────
+
+
+@app.get("/api/contracts", dependencies=[Depends(verify_token)])
+def contracts():
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM contracts ORDER BY created_at DESC")
+    rows = cur.fetchall()
+    conn.close()
+    for r in rows:
+        for k in ("bill_rate", "firm_margin", "net_rate", "total_invoiced", "total_paid", "outstanding"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+    active = [c for c in rows if c["status"] == "active"]
+    monthly_revenue = sum(c["net_rate"] * c["hours_per_week"] * 4.33 for c in active)
+    outstanding = sum(c["outstanding"] for c in rows)
+    return {
+        "contracts": rows,
+        "stats": {
+            "active": len(active),
+            "monthly_revenue": round(monthly_revenue),
+            "outstanding": round(outstanding),
+            "avg_net_rate": round(sum(c["net_rate"] for c in active) / max(len(active), 1)),
+        },
+    }
+
+
+@app.post("/api/contracts", dependencies=[Depends(verify_token)])
+def create_contract(body: dict):
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO contracts (client, staffing_firm, role, bill_rate, firm_margin, net_rate, status, start_date, end_date, hours_per_week)
+        VALUES (%(client)s, %(staffing_firm)s, %(role)s, %(bill_rate)s, %(firm_margin)s, %(net_rate)s, %(status)s, %(start_date)s, %(end_date)s, %(hours_per_week)s)
+        RETURNING id""", body)
+    new_id = cur.fetchone()[0]
+    conn.commit()
+    conn.close()
+    return {"id": new_id, "status": "created"}
+
+
+@app.put("/api/contracts/{contract_id}", dependencies=[Depends(verify_token)])
+def update_contract(contract_id: str, body: dict):
+    conn = _db()
+    cur = conn.cursor()
+    sets = ", ".join(f"{k} = %({k})s" for k in body if k != "id")
+    body["contract_id"] = contract_id
+    cur.execute(f"UPDATE contracts SET {sets}, updated_at = NOW() WHERE id = %(contract_id)s", body)
+    conn.commit()
+    conn.close()
+    return {"id": contract_id, "status": "updated"}
+
+
+@app.delete("/api/contracts/{contract_id}", dependencies=[Depends(verify_token)])
+def delete_contract(contract_id: str):
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM contracts WHERE id = %s", (contract_id,))
+    conn.commit()
+    conn.close()
+    return {"id": contract_id, "status": "deleted"}
+
+
+@app.post("/api/contracts/darius", dependencies=[Depends(verify_token)])
+def contracts_darius(body: dict):
+    """Proxy to Darius agent for contract intelligence."""
+    import httpx as _hx
+    prompt = body.get("message", "")
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT id, client, role, net_rate, status, outstanding, end_date FROM contracts ORDER BY created_at DESC")
+    rows = cur.fetchall()
+    conn.close()
+    active = [c for c in rows if c["status"] == "active"]
+    summary = f"Active: {len(active)}, Total outstanding: ${sum(float(c['outstanding']) for c in rows):.0f}, Avg rate: ${sum(float(c['net_rate']) for c in active)/max(len(active),1):.0f}/hr"
+    brief = "; ".join(f"{c['id']} {c['client']} ${float(c['net_rate'])}/hr {c['status']}" for c in rows)
+    context = f"{summary}. Contracts: {brief}"
+    try:
+        r = _hx.post(
+            "http://darius-agent:8000/task",
+            json={"task": f"[Contract Management] {context}\n\nUser: {prompt}", "project": "melanin-contracts", "session_id": "hud-contracts"},
+            timeout=60,
+        )
+        data = r.json()
+        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except Exception as e:
+        return {"reply": f"Darius unavailable: {e}"}
+
+
+# ── Governance Tab ────────────────────────────────────────────────────────────
+
+@app.get("/api/governance", dependencies=[Depends(verify_token)])
+def governance():
+    import glob, re
+    gov_dir = "/app/governance" if os.path.isdir("/app/governance") else os.path.join(os.path.dirname(__file__), "../../governance")
+    policies = []
+    for f in sorted(glob.glob(os.path.join(gov_dir, "*.md"))):
+        name = os.path.basename(f).replace(".md", "").replace("-", " ").title()
+        with open(f) as fh:
+            content = fh.read()
+        policies.append({"name": name, "file": os.path.basename(f), "lines": len(content.splitlines())})
+
+    # Compliance summary from checklist
+    checklist_path = os.path.join(gov_dir, "compliance-checklist.md")
+    done = todo = pending = 0
+    if os.path.isfile(checklist_path):
+        with open(checklist_path) as fh:
+            text = fh.read()
+        done = text.count("✅")
+        todo = text.count("🔲")
+        pending = text.count("⚠️")
+
+    # Open governance-related tickets
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT id, status, LEFT(task, 100) as task FROM tickets WHERE task ILIKE '%governance%' OR task ILIKE '%compliance%' OR task ILIKE '%security%' OR task ILIKE '%BAA%' OR task ILIKE '%vulnerability%' OR task ILIKE '%penetration%' OR task ILIKE '%disaster%' OR task ILIKE '%non-root%' ORDER BY id")
+    gov_tickets = cur.fetchall()
+    conn.close()
+
+    return {
+        "policies": policies,
+        "compliance": {"done": done, "todo": todo, "pending": pending},
+        "tickets": gov_tickets,
+        "summary": {
+            "total_policies": len(policies),
+            "controls_passed": done,
+            "controls_pending": todo + pending,
+            "open_tickets": len([t for t in gov_tickets if t["status"] == "open"]),
+        }
+    }
+
+
+@app.post("/api/governance/darius", dependencies=[Depends(verify_token)])
+def governance_darius(body: dict):
+    """Proxy to Darius for governance/compliance questions."""
+    import httpx as _hx
+    prompt = body.get("message", "")
+    gov_dir = "/app/governance" if os.path.isdir("/app/governance") else os.path.join(os.path.dirname(__file__), "../../governance")
+    policies = [f.replace(".md", "") for f in os.listdir(gov_dir) if f.endswith(".md")]
+    context = f"Governance policies: {', '.join(policies)}. Ask about any specific policy for details."
+    try:
+        r = _hx.post("http://darius-agent:8000/task",
+            json={"task": f"[Governance & Compliance] {context}\n\nUser: {prompt}", "project": "melanin-governance", "session_id": "hud-governance"},
+            timeout=60)
+        data = r.json()
+        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except Exception as e:
+        return {"reply": f"Darius unavailable: {e}"}
+
+
+# ── SRE Monitoring Tabs ───────────────────────────────────────────────────────
+
+@app.get("/api/sre/internal", dependencies=[Depends(verify_token)])
+def sre_internal():
+    """SRE view: internal infrastructure — agents, databases, queues, orchestrator."""
+    client = docker.from_env()
+    internal_services = [
+        "docker-orchestrator-1", "docker-postgres-1", "docker-ollama-1",
+        "docker-hud-1", "docker-hud-frontend-1", "docker-mcp-server-1",
+        "docker-darius-agent-1", "docker-frontend-agent-1", "docker-backend-agent-1",
+        "docker-deploy-agent-1", "docker-scaffold-agent-1", "docker-support-agent-1",
+        "docker-code-agent-1", "docker-file-agent-1", "docker-uxui-agent-1",
+        "docker-qa-agent-1", "docker-mcp-github-1", "docker-mcp-postgres-1",
+        "docker-mcp-figma-1", "docker-mcp-fetch-1", "docker-playwright-mcp-1",
+        "docker-security-watchdog-1", "docker-redis-1", "docker-vaultwarden-1",
+    ]
+    services = []
+    for name in internal_services:
+        try:
+            c = client.containers.get(name)
+            started = c.attrs.get("State", {}).get("StartedAt", "")
+            services.append({"name": name.replace("docker-", "").replace("-1", ""), "status": c.status, "started": started})
+        except Exception:
+            services.append({"name": name.replace("docker-", "").replace("-1", ""), "status": "not found", "started": ""})
+
+    running = len([s for s in services if s["status"] == "running"])
+    down = len([s for s in services if s["status"] != "running"])
+
+    # DB health
+    db_health = "unknown"
+    try:
+        conn = _db()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        db_health = "healthy"
+        conn.close()
+    except Exception:
+        db_health = "unhealthy"
+
+    return {
+        "services": services,
+        "summary": {"running": running, "down": down, "total": len(services), "db_health": db_health},
+    }
+
+
+@app.get("/api/sre/external", dependencies=[Depends(verify_token)])
+def sre_external():
+    """SRE view: external-facing — production, staging, OrthoFlow, nginx, certs, DNS."""
+    import httpx as _hx
+    client = docker.from_env()
+
+    external_services = [
+        "docker-production-server-1", "docker-staging-server-1", "docker-testing-server-1",
+        "docker-preview-server-1", "docker-nginx-1", "docker-certbot-1",
+        "docker-cloudflare-ddns-1", "docker-fail2ban-1", "docker-cert-monitor-1",
+        "orthoflow-frontend-1", "orthoflow-backend-1", "orthoflow-postgres-1",
+        "orthoflow-redis-1", "orthoflow-minio-1", "orthoflow-worker-1", "orthoflow-ollama-1",
+    ]
+    services = []
+    for name in external_services:
+        try:
+            c = client.containers.get(name)
+            started = c.attrs.get("State", {}).get("StartedAt", "")
+            services.append({"name": name.replace("docker-", "").replace("-1", ""), "status": c.status, "started": started})
+        except Exception:
+            services.append({"name": name.replace("docker-", "").replace("-1", ""), "status": "not found", "started": ""})
+
+    running = len([s for s in services if s["status"] == "running"])
+    down = len([s for s in services if s["status"] != "running"])
+
+    # Endpoint health checks
+    endpoints = []
+    for url, label in [
+        ("http://production-server:3000", "melanin-tech.com"),
+        ("http://staging-server:3003", "staging"),
+        ("http://testing-server:3002", "testing"),
+        ("http://nginx:80", "nginx"),
+    ]:
+        try:
+            r = _hx.get(url, timeout=5, follow_redirects=True)
+            endpoints.append({"name": label, "status": "up", "code": r.status_code, "latency_ms": int(r.elapsed.total_seconds() * 1000)})
+        except Exception:
+            endpoints.append({"name": label, "status": "down", "code": 0, "latency_ms": 0})
+
+    # TLS cert expiry
+    cert_expiry = "unknown"
+    try:
+        c = client.containers.get("docker-nginx-1")
+        result = c.exec_run("cat /etc/letsencrypt/live/melanin-tech.com/fullchain.pem")
+        if result.exit_code == 0:
+            import subprocess
+            p = subprocess.run(["openssl", "x509", "-enddate", "-noout"], input=result.output, capture_output=True)
+            cert_expiry = p.stdout.decode().strip().replace("notAfter=", "")
+    except Exception:
+        pass
+
+    return {
+        "services": services,
+        "endpoints": endpoints,
+        "cert_expiry": cert_expiry,
+        "summary": {"running": running, "down": down, "total": len(services)},
+    }
+
+
+@app.post("/api/sre/darius", dependencies=[Depends(verify_token)])
+def sre_darius(body: dict):
+    """Proxy to Darius for SRE questions."""
+    import httpx as _hx
+    prompt = body.get("message", "")
+    scope = body.get("scope", "all")
+    try:
+        r = _hx.post("http://darius-agent:8000/task",
+            json={"task": f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. User: {prompt}", "project": "melanin-sre", "session_id": "hud-sre"},
+            timeout=60)
+        data = r.json()
+        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except Exception as e:
+        return {"reply": f"Darius unavailable: {e}"}
+
+
+# ── Chart Data (Grafana-style time-series) ────────────────────────────────────
+
+@app.get("/api/charts/executive", dependencies=[Depends(verify_token)])
+def charts_executive():
+    """Time-series data for Executive dashboard charts."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    cur.execute("SELECT containers_running, containers_total, memory_entries, tickets_open, tickets_done, created_at FROM health_snapshots ORDER BY created_at DESC LIMIT 288")
+    snapshots = list(reversed(cur.fetchall()))
+
+    cur.execute("""
+        SELECT DATE(created_at) as date, status, COUNT(*) as count
+        FROM tickets WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY DATE(created_at), status ORDER BY date
+    """)
+    ticket_trend = cur.fetchall()
+
+    cur.execute("SELECT agent, COUNT(*) as count FROM tickets GROUP BY agent ORDER BY count DESC")
+    agent_dist = cur.fetchall()
+
+    cur.execute("""
+        SELECT DATE(created_at) as date, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost
+        FROM llm_usage WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at) ORDER BY date
+    """)
+    llm_usage = cur.fetchall()
+
+    conn.close()
+
+    for row in snapshots:
+        row["created_at"] = row["created_at"].isoformat() if row.get("created_at") else None
+    for row in ticket_trend:
+        row["date"] = str(row["date"])
+    for row in llm_usage:
+        row["date"] = str(row["date"])
+        row["cost"] = float(row["cost"]) if row["cost"] else 0
+
+    return {"snapshots": snapshots, "ticket_trend": ticket_trend, "agent_distribution": agent_dist, "llm_usage": llm_usage}
+
+
+@app.get("/api/charts/sre", dependencies=[Depends(verify_token)])
+def charts_sre():
+    """Time-series for SRE tabs: container health, tickets open/done over time."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT containers_running, containers_total, tickets_open, tickets_done, created_at FROM health_snapshots ORDER BY created_at DESC LIMIT 288")
+    snapshots = list(reversed(cur.fetchall()))
+    conn.close()
+    for row in snapshots:
+        row["created_at"] = row["created_at"].isoformat() if row.get("created_at") else None
+    return {"snapshots": snapshots}
+
+
+@app.get("/api/charts/agents", dependencies=[Depends(verify_token)])
+def charts_agents():
+    """Chart data for Agents tab: tasks per agent, ticket status by agent."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT agent, COUNT(*) as total, SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done, SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) as open FROM tickets GROUP BY agent ORDER BY total DESC")
+    by_agent = cur.fetchall()
+    cur.execute("""
+        SELECT agent, DATE(created_at) as date, COUNT(*) as count
+        FROM tickets WHERE created_at > NOW() - INTERVAL '14 days'
+        GROUP BY agent, DATE(created_at) ORDER BY date
+    """)
+    trend = cur.fetchall()
+    conn.close()
+    for r in trend:
+        r["date"] = str(r["date"])
+    return {"by_agent": by_agent, "trend": trend}
+
+
+@app.get("/api/charts/contracts", dependencies=[Depends(verify_token)])
+def charts_contracts():
+    """Chart data for Contracts tab: revenue trend, outstanding balance."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT client, net_rate, hours_per_week, outstanding, status FROM contracts ORDER BY created_at DESC")
+    rows = cur.fetchall()
+    conn.close()
+    for r in rows:
+        for k in ("net_rate", "hours_per_week", "outstanding"):
+            if r.get(k) is not None:
+                r[k] = float(r[k])
+    active = [r for r in rows if r["status"] == "active"]
+    revenue_by_client = [{"name": r["client"][:12], "value": round(r["net_rate"] * r["hours_per_week"] * 4.33)} for r in active]
+    outstanding_by_client = [{"name": r["client"][:12], "value": round(r["outstanding"])} for r in rows if r["outstanding"] > 0]
+    return {"revenue_by_client": revenue_by_client, "outstanding_by_client": outstanding_by_client}
+
+
+@app.get("/api/charts/tickets", dependencies=[Depends(verify_token)])
+def charts_tickets():
+    """Chart data for Tickets tab: daily open/close trend."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("""
+        SELECT DATE(created_at) as date, COUNT(*) as opened
+        FROM tickets WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY DATE(created_at) ORDER BY date
+    """)
+    opened = cur.fetchall()
+    cur.execute("SELECT agent, COUNT(*) as count FROM tickets WHERE created_at > NOW() - INTERVAL '30 days' GROUP BY agent ORDER BY count DESC LIMIT 8")
+    by_agent = cur.fetchall()
+    conn.close()
+    for r in opened:
+        r["date"] = str(r["date"])
+    return {"opened_trend": opened, "by_agent": by_agent}

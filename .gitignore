@@ -1,71 +1,67 @@
-# Dependencies
+# ===== Dependencies =====
 node_modules/
 .venv/
 __pycache__/
 *.pyc
 
-# Build artifacts
+# ===== Build artifacts =====
 .next/
 dist/
 build/
 
-# Environment & secrets
+# ===== Environment & secrets =====
 .env
 *.env.local
+*.swp
 
-# OS
+# ===== OS =====
 .DS_Store
 
-# Docker volumes (data persists in Docker, not git)
+# ===== Docker volumes =====
 pgdata/
 ollama_data/
 
-# IDE
+# ===== IDE =====
 .idea/
 .vscode/
 
-# Terraform state
+# ===== Terraform state =====
 *.tfstate
 *.tfstate.backup
 .terraform/
 
-# Package locks are kept (deterministic builds)
-# !package-lock.json
-
-# OrthoFlow has its own repo — exclude to avoid duplication
-LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/
-
-# Repos with their own git history (manage separately)
+# ===== Repos with their own git history (managed separately) =====
 melanin-tech-website/
 music-catalogue-system/
+LinesOfBusiness/
 
-
-# Large files (exceed GitHub 100MB limit)
+# ===== Large/binary files =====
 StockPhotos/
-BusinessDocs/
-RaEnergy/
 *.zip
+*.png
 *.PNG
 *.jpeg
+*.JPG
+*.HEIC
 
-# Financial/business docs (keep local only)
+# ===== Business/financial docs (keep local only) =====
+BusinessDocs/
+MelaninDocs/
+Grants/
 *.xlsx
 *.numbers
 *.pdf
-BusinessDocs/
+*.pptx
+*.docx
 
-
-# SENSITIVE — never commit
+# ===== SENSITIVE — never commit =====
 MetaMask/
 GDSM/
 CreditCards/
 RaEnergy*/
 A.I./
-*.JPG
-*.HEIC
 *.crdownload
-*.swp
-*2.md
-*2.html
 
-*.md
+# ===== Misc =====
+LICENSE
+.gitignore 2

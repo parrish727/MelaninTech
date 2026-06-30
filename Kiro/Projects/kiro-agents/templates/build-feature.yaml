@@ -1,0 +1,37 @@
+name: Build Feature
+trigger: build-feature
+description: End-to-end feature development — build, QA, deploy to testing
+params:
+  project:
+    required: true
+    description: Target project
+  feature:
+    required: true
+    description: Feature description
+  agent:
+    default: code
+    description: Primary agent (frontend, backend, code)
+
+steps:
+  - id: implement
+    type: agent
+    agent: "{{agent}}"
+    task: "{{feature}}"
+    project: "{{project}}"
+    approve: true
+
+  - id: qa
+    type: agent
+    agent: qa
+    task: "Review the implementation of: {{feature}}"
+    project: "{{project}}"
+    approve: false
+    depends_on: implement
+
+  - id: deploy-test
+    type: agent
+    agent: deploy
+    task: "Deploy {{project}} to testing server"
+    project: "{{project}}"
+    approve: true
+    depends_on: qa

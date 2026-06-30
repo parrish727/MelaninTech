@@ -1,13 +1,20 @@
 # Melanin Technologies Inc. — System Manifest
 
-**Last Updated:** May 8, 2026
+**Last Updated:** May 30, 2026
 
 ---
 
 ## Company
 
-Melanin Technologies Inc. — Technology consulting firm, Charlotte, NC.
+Melanin Technologies Inc. — Technology consulting & development firm, Charlotte, NC.
 Website: https://www.melanin-tech.com
+HUD: https://hud.melanin-tech.com
+
+**Revenue Streams:**
+1. **SaaS** — OrthoFlow AI (orthodontic AP automation + insurance claims)
+2. **Software-in-a-Service** — Custom builds + managed hosting + ongoing development
+3. **Infrastructure-as-a-Service** — Managed hosting for SMBs ($99–$999/mo)
+4. **Consulting** — Strategy, architecture, and direct contract development ($150–$175/hr)
 
 ---
 

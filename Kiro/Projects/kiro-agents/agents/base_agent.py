@@ -92,6 +92,50 @@ def _guard_proposal(text: str):
 
 _MCP_URL = os.environ.get("MCP_URL", "http://mcp-server:9000")
 
+# ── Redis Response Cache ──────────────────────────────────────────────────────
+import hashlib
+
+_REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+_CACHE_TTL = 86400  # 24 hours
+_redis = None
+
+
+def _get_redis():
+    global _redis
+    if _redis is None:
+        try:
+            import redis
+            _redis = redis.Redis.from_url(_REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+            _redis.ping()
+        except Exception:
+            _redis = None
+    return _redis
+
+
+def _cache_key(system_prompt: str, task_text: str, model: str) -> str:
+    content = f"{model}:{system_prompt[:200]}:{task_text}"
+    return f"llm:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+
+
+def _cache_get(system_prompt: str, task_text: str, model: str) -> str | None:
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        return r.get(_cache_key(system_prompt, task_text, model))
+    except Exception:
+        return None
+
+
+def _cache_set(system_prompt: str, task_text: str, model: str, response: str):
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.setex(_cache_key(system_prompt, task_text, model), _CACHE_TTL, response)
+    except Exception:
+        pass
+
 
 def call_tool(agent_name: str, tool: str, args: dict, timeout: int = 15) -> dict | None:
     """Call any MCP skill by name. Returns parsed JSON or None on failure."""
@@ -178,6 +222,11 @@ def _log_usage(agent: str, model: str, project: str, input_tokens: int, output_t
 
 
 def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 8096) -> str:
+    # Check Redis cache first
+    cached = _cache_get(system_prompt, task_text, model)
+    if cached:
+        return cached
+
     input_est = len(system_prompt + task_text) // 4  # rough token estimate
     if _PROVIDER == "openrouter":
         response = _client.chat.completions.create(
@@ -192,17 +241,19 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
         output = response.choices[0].message.content
         output_est = len(output) // 4
         _log_usage("agent", model, "default", input_est, output_est)
-        return output
     else:
         message = _anthropic_client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=system_prompt,
+            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": task_text}],
         )
         output = message.content[0].text
         _log_usage("agent", model, "default", message.usage.input_tokens, message.usage.output_tokens)
-        return output
+
+    # Store in Redis (24hr TTL)
+    _cache_set(system_prompt, task_text, model, output)
+    return output
 
 
 def create_app(agent_name: str, system_prompt: str, handle_task_fn):

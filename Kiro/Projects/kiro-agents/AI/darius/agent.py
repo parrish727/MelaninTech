@@ -18,6 +18,7 @@ logging.getLogger("litellm").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 
 _MODEL_HEAVY = os.environ.get("DARIUS_MODEL_HEAVY", "anthropic/claude-sonnet-4-6")
+_MODEL_DEFAULT = os.environ.get("DARIUS_MODEL", "anthropic/claude-sonnet-4-6")
 _MODEL_LIGHT = os.environ.get("DARIUS_MODEL_LIGHT", "anthropic/claude-haiku-4-5-20251001")
 _API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -142,7 +143,12 @@ def chain_tasks(tasks: list[dict], session_id: str = None) -> list[str]:
         task_text = step["task"]
         project = step.get("project", "default")
 
-        if agent_name == "darius":
+        # Skip approval gates in chain mode (handled by orchestrator)
+        if step.get("type") == "approve":
+            results.append(f"[APPROVAL GATE] {step.get('message', 'Awaiting approval')}")
+            continue
+
+        if agent_name == "darius" or step.get("type") == "darius":
             result = run_task(task_text, session_id=session_id)
         elif agent_name in urls:
             try:
@@ -166,3 +172,21 @@ def chain_tasks(tasks: list[dict], session_id: str = None) -> list[str]:
             save_turn(session_id, "assistant", result)
 
     return results
+
+
+def run_template(trigger: str, params: dict = None, session_id: str = None) -> list[str]:
+    """
+    Execute a YAML template by trigger name.
+    Resolves params, then runs chain_tasks with the resolved steps.
+    Approval gates are flagged but not blocking (orchestrator handles approval via Slack).
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    from orchestrator.template_engine import load_template, resolve_template
+
+    template = load_template(trigger)
+    if not template:
+        return [f"Template '{trigger}' not found."]
+
+    steps = resolve_template(template, params or {})
+    return chain_tasks(steps, session_id=session_id or f"template-{trigger}")

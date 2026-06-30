@@ -1,10 +1,13 @@
 # Melanin Technologies Inc. — Project Context (May 2026)
 
 ## Company
-- Locally owned tech consulting firm, Charlotte, NC
+- Technology consulting & development firm, Charlotte, NC
+- Four revenue streams: SaaS, Software-in-a-Service, Infrastructure-as-a-Service, Consulting
 - Website: www.melanin-tech.com (self-hosted, Google Fiber, Cloudflare)
+- HUD: hud.melanin-tech.com (internal monitoring, secured)
 - Domain: melanin-tech.com (Cloudflare DNS)
 - Contact: info@melanin-tech.com
+- Integration email: developer.integrator@melanin-tech.com
 
 ## Infrastructure
 - Mac Pro (home server), Google Fiber, ports 80/443 forwarded
@@ -26,11 +29,12 @@
 - Project isolation enforced at prompt + filesystem level
 
 ## HUD (Internal Monitoring)
-- URL: localhost:4000 (hud.melanin-tech.com when DNS configured)
+- URL: https://hud.melanin-tech.com (live, TLS secured)
 - Auth: password + TOTP 2FA
-- 9 tabs: Executive, Agents, Infrastructure, Darius, Projects, Tickets, Memory, Security, Clients
+- 10 tabs: Executive, Agents, Infrastructure, Darius, Projects, Tickets, Memory, Security, Clients, Contracts
 - WebSocket live updates (10s), health snapshots every 5 min (1-year retention)
 - Container failure alerts to Slack
+- Darius AI integrated (contract intelligence, rate optimization)
 - LLM token/cost tracking per agent/model
 
 ## OrthoFlow AI (Client Product)
@@ -72,6 +76,9 @@
 
 ## Current Backlog
 - OrthoFlow: email verification (needs SMTP app password), logo, registration ToS checkbox, password reset UI
-- Insurance claims tracking (v2.1)
+- OrthoFlow v2.1: Medicare/Medicaid insurance claims processing (Ticket #74)
+- HUD Contracts: persistence layer — Postgres CRUD + upload form (Ticket #75)
+- Governance: container vulnerability scanning, non-root migration, pen test, DR test, BAA execution
 - Multi-location dashboard (when client needs it)
 - Dentrix API partnership application (in progress)
+- Website: add Infrastructure/Hosting section, SiaS messaging, consulting + development positioning

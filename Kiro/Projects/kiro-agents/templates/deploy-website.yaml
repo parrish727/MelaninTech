@@ -1,0 +1,44 @@
+name: Deploy Website
+trigger: deploy-website
+description: Build, test, stage, and deploy melanin-tech.com to production
+params:
+  project:
+    default: melanin-tech-website
+    description: Project to deploy
+
+steps:
+  - id: build
+    type: agent
+    agent: deploy
+    task: "Build and deploy {{project}} to testing server (port 3002)"
+    project: "{{project}}"
+    approve: true
+
+  - id: qa
+    type: agent
+    agent: qa
+    task: "Run QA checks on testing server at http://testing-server:3002"
+    project: "{{project}}"
+    approve: false
+    depends_on: build
+
+  - id: stage
+    type: agent
+    agent: deploy
+    task: "Deploy {{project}} to staging server (port 3003)"
+    project: "{{project}}"
+    approve: true
+    depends_on: qa
+
+  - id: production
+    type: approve
+    message: "Staging looks good. Deploy {{project}} to production?"
+    depends_on: stage
+
+  - id: deploy-prod
+    type: agent
+    agent: deploy
+    task: "Deploy {{project}} to production server (port 3000)"
+    project: "{{project}}"
+    approve: false
+    depends_on: production

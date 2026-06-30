@@ -9,3 +9,4 @@ psycopg2-binary==2.9.9
 pgvector==0.2.5
 openai>=1.30.0
 docker>=7.0.0
+redis==5.0.0

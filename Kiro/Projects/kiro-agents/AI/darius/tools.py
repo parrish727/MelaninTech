@@ -224,4 +224,38 @@ class AgentDispatchTool(Tool):
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
-ALL_TOOLS = [ReadFileTool(), WriteFileTool(), ListDirTool(), ShellTool(), GitTool(), MCPTool(), AgentDispatchTool()]
+# ── Web Search via SearXNG ─────────────────────────────────────────────────────
+
+_SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng:8080")
+
+
+class WebSearchTool(Tool):
+    name = "web_search"
+    description = "Search the web using private SearXNG instance. Returns titles, URLs, and snippets. Use for research, market analysis, and current information."
+    inputs = {
+        "query": {"type": "string", "description": "Search query"},
+        "num_results": {"type": "integer", "description": "Number of results (default 5)", "nullable": True},
+    }
+    output_type = "string"
+
+    def forward(self, query: str, num_results: int = 5) -> str:
+        import json
+        try:
+            r = httpx.get(
+                f"{_SEARXNG_URL}/search",
+                params={"q": query, "format": "json", "engines": "google,duckduckgo,brave", "pageno": 1},
+                timeout=15,
+            )
+            r.raise_for_status()
+            results = r.json().get("results", [])[:num_results]
+            formatted = []
+            for res in results:
+                formatted.append(f"**{res.get('title', '')}**\n{res.get('url', '')}\n{res.get('content', '')}\n")
+            return "\n---\n".join(formatted) if formatted else "No results found."
+        except Exception as e:
+            return f"Search error: {e}"
+
+
+# ── Tool registry ─────────────────────────────────────────────────────────────
+
+ALL_TOOLS = [ReadFileTool(), WriteFileTool(), ListDirTool(), ShellTool(), GitTool(), MCPTool(), AgentDispatchTool(), WebSearchTool()]
