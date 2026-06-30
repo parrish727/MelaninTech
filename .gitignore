@@ -61,6 +61,8 @@ CreditCards/
 RaEnergy*/
 A.I./
 *.crdownload
+**/secrets.conf
+**/support_contracts.json
 
 # ===== Misc =====
 LICENSE
