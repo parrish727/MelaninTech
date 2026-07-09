@@ -222,6 +222,8 @@ def start():
         while True:
             time.sleep(POLL_INTERVAL)
             _sweep()
+            # Check for monitoring gaps (HUD snapshots, SLA tracking)
+            check_monitoring_gaps(_slack_app, _slack_channel)
             if time.time() - last_digest >= STATUS_INTERVAL:
                 try:
                     _status_digest()
@@ -232,3 +234,90 @@ def start():
     t = threading.Thread(target=_loop, daemon=True, name="watchdog")
     t.start()
     return t
+
+
+# ── Monitoring Gap Detection ──────────────────────────────────────────────────
+# Runs every 15 minutes alongside the stuck ticket check.
+# If health snapshots stop for >15 min, alerts Slack and auto-restarts HUD.
+
+import os
+import psycopg2
+
+_last_gap_check = 0
+_GAP_CHECK_INTERVAL = 900  # 15 minutes
+_GAP_ALERT_THRESHOLD = 900  # alert if no snapshot in 15 min
+
+
+def check_monitoring_gaps(app, channel):
+    """Verify HUD is recording health snapshots. Auto-fix if not."""
+    global _last_gap_check
+    import time as _time
+    now = _time.time()
+
+    if now - _last_gap_check < _GAP_CHECK_INTERVAL:
+        return
+    _last_gap_check = now
+
+    try:
+        dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
+        conn = psycopg2.connect(dsn)
+        cur = conn.cursor()
+        cur.execute("SELECT created_at FROM health_snapshots ORDER BY created_at DESC LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+
+        if not row:
+            _alert_and_fix(app, channel, "No health snapshots found in database")
+            return
+
+        from datetime import datetime, timezone
+        last_snapshot = row[0]
+        if last_snapshot.tzinfo is None:
+            last_snapshot = last_snapshot.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - last_snapshot).total_seconds()
+
+        if age_seconds > _GAP_ALERT_THRESHOLD:
+            _alert_and_fix(app, channel, f"Last health snapshot was {int(age_seconds / 60)} minutes ago")
+
+    except Exception as e:
+        log.error(f"Monitoring gap check failed: {e}")
+
+
+def _alert_and_fix(app, channel, reason):
+    """Alert Slack and restart the HUD container to restore monitoring."""
+    import subprocess
+
+    log.warning(f"Monitoring gap detected: {reason}")
+
+    # Alert
+    try:
+        app.client.chat_postMessage(
+            channel=channel,
+            text=(
+                f"🔴 *Monitoring Gap Detected*\n"
+                f"*Issue:* {reason}\n"
+                f"*Action:* Auto-restarting HUD health monitor\n"
+                f"*SLA Impact:* Gap in uptime tracking data"
+            ),
+        )
+    except Exception:
+        pass
+
+    # Auto-fix: restart HUD container
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "docker-hud-1"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            try:
+                app.client.chat_postMessage(
+                    channel=channel,
+                    text="✅ HUD container restarted. Monitoring should resume within 5 minutes.",
+                )
+            except Exception:
+                pass
+        else:
+            log.error(f"HUD restart failed: {result.stderr}")
+    except Exception as e:
+        log.error(f"Auto-fix failed: {e}")
