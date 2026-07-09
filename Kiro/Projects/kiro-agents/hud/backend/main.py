@@ -1,13 +1,26 @@
 """Melanin Tech HUD — Internal monitoring dashboard backend."""
 import os
+import threading
 import docker
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
-app = FastAPI(title="Melanin Tech HUD")
+
+@asynccontextmanager
+async def lifespan(app):
+    # Startup: launch health monitor thread
+    # _check_containers is defined later in this file but available at runtime
+    threading.Thread(target=_check_containers, daemon=True).start()
+    print("[HUD] Health monitor thread started", flush=True)
+    yield
+    # Shutdown: nothing to clean up (daemon thread dies with process)
+
+
+app = FastAPI(title="Melanin Tech HUD", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _DSN = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
@@ -445,8 +458,14 @@ _alerted: set = set()
 
 
 def _check_containers():
-    """Background thread: check container health every 60s, alert on failures, store snapshots."""
+    """Background thread: check container health every 60s, alert on failures, store snapshots, send 12hr SRE digest, daily email triage."""
     import time
+    _last_digest = time.time()
+    _last_email_triage = time.time()
+    _last_snapshot = 0  # Force first snapshot immediately
+    DIGEST_INTERVAL = 43200  # 12 hours
+    EMAIL_TRIAGE_INTERVAL = 86400  # 24 hours (daily)
+
     while True:
         time.sleep(60)
         try:
@@ -464,7 +483,7 @@ def _check_containers():
                     _alerted.discard(c.name)
 
             # Store health snapshot every 5 minutes
-            if int(time.time()) % 300 < 60:
+            if time.time() - _last_snapshot >= 300:
                 try:
                     conn = psycopg2.connect(_DSN)
                     cur = conn.cursor()
@@ -476,14 +495,267 @@ def _check_containers():
                     t_done = cur.fetchone()[0]
                     cur.execute("INSERT INTO health_snapshots (containers_running, containers_total, memory_entries, tickets_open, tickets_done) VALUES (%s,%s,%s,%s,%s)",
                                 (len(running), len(our_containers), mem, t_open, t_done))
-                    # Purge snapshots older than 90 days
                     cur.execute("DELETE FROM health_snapshots WHERE created_at < NOW() - INTERVAL '365 days'")
+
+                    # Auto-calculate error budget consumption
+                    cur.execute("""
+                        SELECT name, target, window_hours FROM llm_slos
+                    """)
+                    slos = cur.fetchall()
+                    for slo_name, target, window_hours in slos:
+                        target = float(target)  # DB returns Decimal, need float for math
+                        period_start = f"NOW() - INTERVAL '{window_hours} hours'"
+                        if slo_name == 'agent_availability':
+                            # Exclude HUD timeout errors — those are network timeouts, not LLM failures
+                            cur.execute(f"""
+                                SELECT COUNT(*) as total,
+                                       COUNT(*) FILTER (WHERE status='success') as success
+                                FROM llm_traces
+                                WHERE created_at > {period_start}
+                                  AND COALESCE(task_preview, '') NOT LIKE '%%HUD timeout%%'
+                            """)
+                            total, success = cur.fetchone()
+                            if total == 0:
+                                continue  # No data — skip, don't report as failure
+                            current = (success / total) * 100
+                            budget_total = 100 - target  # e.g., 0.5% error budget
+                            consumed = max(0, (100 - current))
+                        elif slo_name == 'error_rate':
+                            # Exclude HUD timeout errors from error counting
+                            cur.execute(f"""
+                                SELECT COUNT(*) as total,
+                                       COUNT(*) FILTER (WHERE status != 'success'
+                                           AND COALESCE(task_preview, '') NOT LIKE '%%HUD timeout%%') as errors
+                                FROM llm_traces
+                                WHERE created_at > {period_start}
+                            """)
+                            total, errors = cur.fetchone()
+                            if total == 0:
+                                continue  # No data — skip, don't report as failure
+                            current = (errors / total) * 100
+                            budget_total = target  # 2% allowed
+                            consumed = current
+                        elif slo_name == 'latency_p95':
+                            cur.execute(f"""
+                                SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) as p95
+                                FROM llm_traces
+                                WHERE created_at > {period_start}
+                                  AND status = 'success'
+                                  AND cached = FALSE
+                            """)
+                            row = cur.fetchone()
+                            p95 = row[0] if row and row[0] else 0
+                            # target is in ms (e.g., 30000 = 30s)
+                            budget_total = target
+                            consumed = p95
+                            current = p95
+                        elif slo_name == 'cache_hit_rate':
+                            cur.execute(f"""
+                                SELECT COUNT(*) as total,
+                                       COUNT(*) FILTER (WHERE cached = TRUE) as hits
+                                FROM llm_traces
+                                WHERE created_at > {period_start}
+                            """)
+                            total, hits = cur.fetchone()
+                            if total == 0:
+                                continue
+                            current = (hits / total) * 100
+                            # For cache hit rate, budget is inverse — we want >= target
+                            # consumed represents how much below target we are
+                            budget_total = target  # e.g., 20%
+                            consumed = max(0, target - current)
+                        elif slo_name == 'token_budget_daily':
+                            cur.execute("SELECT COALESCE(SUM(input_tokens), 0) FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours'")
+                            tokens = cur.fetchone()[0]
+                            budget_total = target
+                            consumed = tokens
+                            current = tokens
+                        else:
+                            continue
+
+                        remaining = max(0, budget_total - consumed)
+                        status_val = 'healthy' if consumed < budget_total * 0.8 else ('warning' if consumed < budget_total else 'exhausted')
+
+                        cur.execute("""
+                            INSERT INTO llm_error_budgets (slo_name, period_start, period_end, budget_total, budget_consumed, budget_remaining, status)
+                            VALUES (%s, NOW() - INTERVAL '%s hours', NOW(), %s, %s, %s, %s)
+                        """, (slo_name, window_hours, budget_total, consumed, remaining, status_val))
+
+                        # Alert on budget exhaustion
+                        if status_val == 'exhausted' and slo_name not in _alerted:
+                            _alerted.add(f"budget_{slo_name}")
+                            _send_alert(f"🔴 *Error Budget Exhausted:* `{slo_name}` — consumed {consumed:.1f} / {budget_total:.1f}")
+
+                    conn.commit()
                     conn.commit()
                     conn.close()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                    _last_snapshot = time.time()
+                    print(f"[HUD-WATCHDOG] Snapshot written successfully", flush=True)
+                except Exception as snap_err:
+                    print(f"[HUD-WATCHDOG] Snapshot write FAILED: {snap_err}", flush=True)
+                    _last_snapshot = time.time()  # don't retry immediately on error
+
+            # 12-hour SRE Digest
+            if time.time() - _last_digest >= DIGEST_INTERVAL:
+                _last_digest = time.time()
+                _send_sre_digest(our_containers, running)
+
+            # Daily email triage (every 24h, posts to Slack)
+            if time.time() - _last_email_triage >= EMAIL_TRIAGE_INTERVAL:
+                _last_email_triage = time.time()
+                _run_daily_email_triage()
+
+            # Credit budget check (every 5 min, alert at 80%)
+            if time.time() - _last_snapshot >= 300:
+                _check_credit_budget()
+                _check_endpoint_health()
+
+        except Exception as _watchdog_err:
+            import traceback; print(f"[HUD-WATCHDOG] Loop error: {_watchdog_err}"); traceback.print_exc()
+
+
+# ── Credit Budget Monitoring ──────────────────────────────────────────────────
+
+_MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "25.00"))
+_BUDGET_ALERT_THRESHOLD = 0.80  # 80%
+_budget_alerted_this_month = False
+
+
+def _check_credit_budget():
+    """Check if LLM spend is approaching monthly budget. Alert Slack at 80%."""
+    global _budget_alerted_this_month
+    try:
+        conn = psycopg2.connect(_DSN)
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM llm_traces WHERE created_at > date_trunc('month', NOW())")
+        spent = float(cur.fetchone()[0])
+
+        # Reset alert flag on new month
+        cur.execute("SELECT EXTRACT(DAY FROM NOW())")
+        day = int(cur.fetchone()[0])
+        if day == 1:
+            _budget_alerted_this_month = False
+
+        conn.close()
+
+        utilization = spent / _MONTHLY_BUDGET_USD if _MONTHLY_BUDGET_USD > 0 else 0
+
+        if utilization >= _BUDGET_ALERT_THRESHOLD and not _budget_alerted_this_month:
+            _budget_alerted_this_month = True
+            _send_alert(
+                f"⚠️ *LLM Credit Alert — {utilization*100:.0f}% of monthly budget used*\n"
+                f"  • Spent: ${spent:.2f} / ${_MONTHLY_BUDGET_USD:.2f}\n"
+                f"  • Remaining: ${_MONTHLY_BUDGET_USD - spent:.2f}\n"
+                f"  • Action: Reduce usage or increase budget in `LLM_MONTHLY_BUDGET_USD` env var"
+            )
+    except Exception:
+        pass
+
+
+def _send_sre_digest(all_containers, running):
+    """Generate and send 12-hour SRE analysis report to Slack."""
+    try:
+        conn = psycopg2.connect(_DSN)
+        cur = conn.cursor()
+
+        # Container stats
+        total = len(all_containers)
+        running_count = len(running)
+        down = [c.name.replace("docker-", "").replace("-1", "") for c in all_containers if c.status != "running" and (c.name.startswith("docker-") or c.name.startswith("orthoflow-"))]
+
+        # Agent health
+        agent_names = ["orchestrator", "frontend-agent", "backend-agent", "deploy-agent",
+                       "scaffold-agent", "support-agent", "code-agent", "file-agent",
+                       "uxui-agent", "qa-agent", "sre-agent", "darius-agent"]
+        agents_up = []
+        agents_down = []
+        for name in agent_names:
+            container_name = f"docker-{name}-1"
+            match = next((c for c in all_containers if c.name == container_name), None)
+            if match and match.status == "running":
+                agents_up.append(name.replace("-agent", "").replace("-", ""))
+            else:
+                agents_down.append(name.replace("-agent", "").replace("-", ""))
+
+        # Ticket activity (12h)
+        cur.execute("SELECT status, COUNT(*) FROM tickets WHERE updated_at > NOW() - INTERVAL '12 hours' GROUP BY status")
+        ticket_activity = {row[0]: row[1] for row in cur.fetchall()}
+
+        # LLM metrics (12h)
+        cur.execute("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'success') as success, COALESCE(SUM(input_tokens + output_tokens), 0) as tokens, COALESCE(SUM(cost_usd), 0) as cost, COALESCE(AVG(latency_ms), 0) as avg_latency, COUNT(*) FILTER (WHERE cached = TRUE) as cache_hits FROM llm_traces WHERE created_at > NOW() - INTERVAL '12 hours'")
+        llm = cur.fetchone()
+        llm_total, llm_success, llm_tokens, llm_cost, llm_avg_latency, llm_cache_hits = llm or (0, 0, 0, 0, 0, 0)
+
+        # Failures (12h)
+        cur.execute("SELECT failure_type, COUNT(*) FROM llm_failures WHERE created_at > NOW() - INTERVAL '12 hours' GROUP BY failure_type")
+        failures = {row[0]: row[1] for row in cur.fetchall()}
+
+        # SLO compliance
+        if llm_total > 0:
+            availability = (llm_success / llm_total) * 100
+            error_rate = 100 - availability
+            cache_rate = (llm_cache_hits / llm_total) * 100
+        else:
+            availability = None
+            error_rate = None
+            cache_rate = None
+
+        conn.close()
+
+        # Build report
+        lines = [
+            "📊 *SRE 12-Hour Digest*",
+            "",
+            "*Infrastructure*",
+            f"  • Containers: {running_count}/{total} running",
+        ]
+        if down:
+            lines.append(f"  • ⚠️ Down: {', '.join(down[:5])}")
+        else:
+            lines.append("  • ✅ All services healthy")
+
+        lines.extend([
+            "",
+            "*Agent Health*",
+            f"  • ✅ Online ({len(agents_up)}/{len(agent_names)}): {', '.join(agents_up)}",
+        ])
+        if agents_down:
+            lines.append(f"  • ❌ Offline: {', '.join(agents_down)}")
+
+        lines.extend([
+            "",
+            "*LLM Performance*",
+            f"  • Calls: {llm_total} ({llm_success} success, {llm_total - llm_success} failed)",
+            f"  • Tokens: {int(llm_tokens):,} ({int(llm_cache_hits)} cache hits, {cache_rate:.0f}% hit rate)",
+            f"  • Avg latency: {int(llm_avg_latency)}ms | Cost: ${float(llm_cost):.4f}",
+        ])
+
+        if failures:
+            lines.append(f"  • Failures: {', '.join(f'{t}({c})' for t, c in failures.items())}")
+
+        lines.extend([
+            "",
+            "*SLO Status*",
+        ])
+        if availability is not None:
+            lines.extend([
+                f"  • Availability: {'✅' if availability >= 99.5 else '❌'} {availability:.1f}% (target: 99.5%)",
+                f"  • Error rate: {'✅' if error_rate <= 2 else '❌'} {error_rate:.1f}% (target: <2%)",
+                f"  • Cache hit: {'✅' if cache_rate >= 20 else '⚠️'} {cache_rate:.0f}% (target: >20%)",
+            ])
+        else:
+            lines.append("  • ℹ️ No LLM calls in this period — SLOs not applicable")
+
+        if ticket_activity:
+            lines.extend(["", "*Ticket Activity (12h)*"])
+            for status, count in ticket_activity.items():
+                emoji = {"done": "✅", "open": "🟡", "cancelled": "⛔"}.get(status, "⚪")
+                lines.append(f"  • {emoji} {status}: {count}")
+
+        _send_alert("\n".join(lines))
+
+    except Exception:
+        pass
 
 
 def _send_alert(message: str):
@@ -500,8 +772,573 @@ def _send_alert(message: str):
         pass
 
 
-# Start health monitor in background
-threading.Thread(target=_check_containers, daemon=True).start()
+# ── Knowledge Graph API ───────────────────────────────────────────────────────
+import re
+import pathlib
+
+_GRAPHIFY_PATH = pathlib.Path("/app/graphify-out/graph.json")
+_MELANIN_DOCS_PATH = pathlib.Path("/app/melanin-docs")
+_GRAPH_CACHE: dict = {}
+_GRAPH_CACHE_TIME: float = 0
+
+# Documents to exclude (read-only policy)
+_EXCLUDED_DIRS = {"Finance", "sessions"}
+
+
+def _parse_markdown_sections(filepath: pathlib.Path) -> list[dict]:
+    """Parse a markdown file into sections at h2 (##) level."""
+    try:
+        content = filepath.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    sections = []
+    current_section = None
+    current_lines: list[str] = []
+    doc_name = filepath.stem
+
+    for line in content.split("\n"):
+        if line.startswith("## "):
+            # Save previous section
+            if current_section:
+                sections.append({
+                    "id": f"doc_{doc_name}_{current_section}".lower().replace(" ", "_").replace("/", "_")[:80],
+                    "label": current_section,
+                    "file_type": "doc",
+                    "source_file": str(filepath.relative_to(_MELANIN_DOCS_PATH)) if _MELANIN_DOCS_PATH.exists() else filepath.name,
+                    "content": "\n".join(current_lines).strip()[:500],
+                    "_origin": "melanin-docs",
+                    "community_name": f"Doc: {doc_name}",
+                })
+            current_section = line[3:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    # Last section
+    if current_section:
+        sections.append({
+            "id": f"doc_{doc_name}_{current_section}".lower().replace(" ", "_").replace("/", "_")[:80],
+            "label": current_section,
+            "file_type": "doc",
+            "source_file": str(filepath.relative_to(_MELANIN_DOCS_PATH)) if _MELANIN_DOCS_PATH.exists() else filepath.name,
+            "content": "\n".join(current_lines).strip()[:500],
+            "_origin": "melanin-docs",
+            "community_name": f"Doc: {doc_name}",
+        })
+
+    return sections
+
+
+def _parse_glossary_concepts(filepath: pathlib.Path) -> list[dict]:
+    """Extract concept nodes from the Glossary (each bolded term in a table row)."""
+    try:
+        content = filepath.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    concepts = []
+    current_category = "General"
+
+    for line in content.split("\n"):
+        if line.startswith("## "):
+            current_category = line[3:].strip()
+        # Match table rows: | **Term** | Definition |
+        match = re.match(r"\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|", line)
+        if match:
+            term = match.group(1).strip()
+            definition = match.group(2).strip()
+            concepts.append({
+                "id": f"concept_{term}".lower().replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")[:80],
+                "label": term,
+                "file_type": "concept",
+                "source_file": "Glossary.md",
+                "content": definition,
+                "_origin": "glossary",
+                "community_name": f"Concept: {current_category}",
+            })
+
+    return concepts
+
+
+def _get_doc_nodes() -> tuple[list[dict], list[dict]]:
+    """Parse all MelaninDocs into nodes and infer edges."""
+    nodes = []
+    edges = []
+
+    if not _MELANIN_DOCS_PATH.exists():
+        return nodes, edges
+
+    # Walk MelaninDocs for markdown files
+    doc_files: list[pathlib.Path] = []
+    for f in _MELANIN_DOCS_PATH.rglob("*.md"):
+        # Skip excluded directories and duplicate files (macOS " 2.md" copies)
+        if any(part in _EXCLUDED_DIRS for part in f.parts):
+            continue
+        if " 2.md" in f.name:
+            continue
+        doc_files.append(f)
+
+    # Create a top-level node for each document
+    doc_top_nodes = []
+    for f in doc_files:
+        doc_id = f"doc_{f.stem}".lower().replace(" ", "_")[:60]
+        doc_top_nodes.append({
+            "id": doc_id,
+            "label": f.stem.replace("_", " "),
+            "file_type": "doc",
+            "source_file": str(f.relative_to(_MELANIN_DOCS_PATH)),
+            "content": "",
+            "_origin": "melanin-docs",
+            "community_name": "MelaninDocs",
+        })
+        nodes.append(doc_top_nodes[-1])
+
+        # Parse sections
+        sections = _parse_markdown_sections(f)
+        for section in sections:
+            nodes.append(section)
+            edges.append({
+                "source": doc_id,
+                "target": section["id"],
+                "label": "has_section",
+                "type": "contains",
+            })
+
+    # Parse Glossary for concept nodes
+    glossary_path = _MELANIN_DOCS_PATH / "Glossary.md"
+    if glossary_path.exists():
+        concepts = _parse_glossary_concepts(glossary_path)
+        for concept in concepts:
+            nodes.append(concept)
+            # Link concept to glossary doc
+            edges.append({
+                "source": "doc_glossary",
+                "target": concept["id"],
+                "label": "defines",
+                "type": "defines",
+            })
+
+    # Infer cross-references: if a concept term appears in a doc section, create an edge
+    concept_labels = {n["id"]: n["label"] for n in nodes if n["file_type"] == "concept"}
+    section_nodes = [n for n in nodes if n["file_type"] == "doc" and n.get("content")]
+
+    for section in section_nodes:
+        content_lower = section.get("content", "").lower()
+        for concept_id, concept_label in concept_labels.items():
+            # Only link if the concept name is mentioned (case-insensitive, word boundary)
+            if len(concept_label) > 3 and concept_label.lower() in content_lower:
+                edges.append({
+                    "source": section["id"],
+                    "target": concept_id,
+                    "label": "references",
+                    "type": "references",
+                })
+
+    return nodes, edges
+
+
+def _get_agent_nodes() -> tuple[list[dict], list[dict]]:
+    """Create nodes for each agent with live status from Docker."""
+    agent_list = [
+        ("orchestrator", "Orchestrator", "Central router — routes tasks, manages approvals, stores memory"),
+        ("frontend-agent", "Frontend Agent", "React/Next.js UI development"),
+        ("backend-agent", "Backend Agent", "FastAPI/Python backend development"),
+        ("deploy-agent", "Deploy Agent", "Docker/K8s deployment operations"),
+        ("scaffold-agent", "Scaffold Agent", "New project bootstrapping"),
+        ("support-agent", "Support Agent", "Client support ticket handling"),
+        ("code-agent", "Code Agent", "General code operations"),
+        ("file-agent", "File Agent", "File system operations"),
+        ("uxui-agent", "UX/UI Agent", "Design audit and visual regression"),
+        ("qa-agent", "QA Agent", "Testing and quality assurance"),
+        ("sre-agent", "SRE Agent", "Site reliability — DB diagnostics, SLO tracking"),
+        ("dba-agent", "DBA Agent", "Database health monitoring"),
+        ("darius-agent", "Darius", "Autonomous coding agent — multi-step planning and execution"),
+        ("security-watchdog", "Security Watchdog", "Container vulnerability scanning, anomaly detection"),
+    ]
+
+    nodes = []
+    edges = []
+
+    # Get live container status
+    status_map = {}
+    try:
+        client = docker.from_env()
+        for c in client.containers.list(all=True):
+            status_map[c.name] = c.status
+    except Exception:
+        pass
+
+    for agent_name, label, description in agent_list:
+        container_name = f"docker-{agent_name}-1"
+        status = status_map.get(container_name, "unknown")
+
+        node_id = f"agent_{agent_name}".replace("-", "_")
+        nodes.append({
+            "id": node_id,
+            "label": label,
+            "file_type": "agent",
+            "source_file": f"agents/{agent_name.replace('-', '_')}.py",
+            "content": description,
+            "_origin": "infrastructure",
+            "community_name": "Agents",
+            "status": status,
+        })
+
+    # Agent relationships
+    # All agents connect to orchestrator
+    for agent_name, _, _ in agent_list:
+        if agent_name != "orchestrator":
+            edges.append({
+                "source": "agent_orchestrator",
+                "target": f"agent_{agent_name}".replace("-", "_"),
+                "label": "routes_to",
+                "type": "routes",
+            })
+
+    # Darius has special relationship — it chains other agents
+    for agent_name, _, _ in agent_list:
+        if agent_name not in ("orchestrator", "darius-agent", "security-watchdog"):
+            edges.append({
+                "source": "agent_darius_agent",
+                "target": f"agent_{agent_name}".replace("-", "_"),
+                "label": "can_dispatch",
+                "type": "dispatches",
+            })
+
+    return nodes, edges
+
+
+def _get_service_nodes() -> tuple[list[dict], list[dict]]:
+    """Create nodes for infrastructure services with live status."""
+    services = [
+        ("postgres", "PostgreSQL + pgvector", "Database — semantic memory, tickets, health snapshots"),
+        ("redis", "Redis", "Cache and message queue"),
+        ("ollama", "Ollama", "Local embeddings (nomic-embed-text, 768-dim)"),
+        ("nginx", "nginx", "Reverse proxy — TLS, rate limiting, security headers"),
+        ("hud", "HUD Backend", "Internal monitoring API"),
+        ("hud-frontend", "HUD Frontend", "Dashboard UI at hud.melanin-tech.com"),
+        ("production-server", "melanin-tech.com", "Production website"),
+        ("certbot", "certbot", "TLS certificate auto-renewal"),
+        ("fail2ban", "fail2ban", "Intrusion detection and IP banning"),
+        ("cloudflare-ddns", "Cloudflare DDNS", "Dynamic DNS record updates"),
+        ("vaultwarden", "Vaultwarden", "Self-hosted password/secrets manager"),
+        ("odysseus", "Odysseus", "AI research workspace"),
+        ("mcp-github", "MCP GitHub", "GitHub tool interface for agents"),
+        ("mcp-postgres", "MCP Postgres", "Database tool interface for agents"),
+        ("mcp-fetch", "MCP Fetch", "HTTP fetch tool for agents"),
+    ]
+
+    nodes = []
+    edges = []
+
+    # Get live container status
+    status_map = {}
+    try:
+        client = docker.from_env()
+        for c in client.containers.list(all=True):
+            status_map[c.name] = c.status
+    except Exception:
+        pass
+
+    for svc_name, label, description in services:
+        container_name = f"docker-{svc_name}-1"
+        status = status_map.get(container_name, "unknown")
+
+        node_id = f"svc_{svc_name}".replace("-", "_")
+        nodes.append({
+            "id": node_id,
+            "label": label,
+            "file_type": "service",
+            "source_file": f"docker-compose.yml#{svc_name}",
+            "content": description,
+            "_origin": "infrastructure",
+            "community_name": "Infrastructure",
+            "status": status,
+        })
+
+    # Service dependencies
+    deps = [
+        ("svc_hud", "svc_postgres", "depends_on"),
+        ("svc_hud_frontend", "svc_hud", "depends_on"),
+        ("svc_ollama", "svc_postgres", "stores_in"),
+        ("svc_nginx", "svc_production_server", "proxies_to"),
+        ("svc_nginx", "svc_hud_frontend", "proxies_to"),
+        ("svc_certbot", "svc_nginx", "provides_certs"),
+        ("svc_odysseus", "svc_ollama", "uses"),
+        ("svc_mcp_github", "svc_postgres", "reads"),
+        ("svc_mcp_postgres", "svc_postgres", "connects_to"),
+    ]
+    for src, tgt, label in deps:
+        edges.append({"source": src, "target": tgt, "label": label, "type": "depends"})
+
+    # Agents depend on infrastructure
+    agent_infra_deps = [
+        ("agent_orchestrator", "svc_postgres", "stores_memory"),
+        ("agent_orchestrator", "svc_ollama", "generates_embeddings"),
+        ("agent_darius_agent", "svc_mcp_github", "uses_tool"),
+        ("agent_darius_agent", "svc_mcp_postgres", "uses_tool"),
+        ("agent_darius_agent", "svc_mcp_fetch", "uses_tool"),
+    ]
+    for src, tgt, label in agent_infra_deps:
+        edges.append({"source": src, "target": tgt, "label": label, "type": "uses"})
+
+    return nodes, edges
+
+
+def _build_unified_graph() -> dict:
+    """Build the full knowledge graph merging code graph, docs, agents, and services."""
+    import time
+    global _GRAPH_CACHE, _GRAPH_CACHE_TIME
+
+    # Cache for 60 seconds
+    if _GRAPH_CACHE and (time.time() - _GRAPH_CACHE_TIME) < 60:
+        return _GRAPH_CACHE
+
+    all_nodes = []
+    all_edges = []
+
+    # 1. Load Graphify code graph (if available)
+    if _GRAPHIFY_PATH.exists():
+        try:
+            import json as _j
+            with open(_GRAPHIFY_PATH) as f:
+                graphify_data = _j.load(f)
+            # Add code nodes (limit to reduce size — skip trivial nodes)
+            for node in graphify_data.get("nodes", []):
+                node["file_type"] = node.get("file_type", "code")
+                all_nodes.append(node)
+            # Add code edges
+            for edge in graphify_data.get("links", graphify_data.get("edges", [])):
+                all_edges.append(edge)
+        except Exception:
+            pass
+
+    # 2. Add document nodes from MelaninDocs
+    doc_nodes, doc_edges = _get_doc_nodes()
+    all_nodes.extend(doc_nodes)
+    all_edges.extend(doc_edges)
+
+    # 3. Add agent nodes with live status
+    agent_nodes, agent_edges = _get_agent_nodes()
+    all_nodes.extend(agent_nodes)
+    all_edges.extend(agent_edges)
+
+    # 4. Add infrastructure service nodes
+    svc_nodes, svc_edges = _get_service_nodes()
+    all_nodes.extend(svc_nodes)
+    all_edges.extend(svc_edges)
+
+    # 5. Cross-link: connect doc concepts to agents/services where names match
+    concept_nodes = [n for n in all_nodes if n.get("file_type") == "concept"]
+    agent_svc_nodes = [n for n in all_nodes if n.get("file_type") in ("agent", "service")]
+
+    for concept in concept_nodes:
+        concept_label_lower = concept["label"].lower()
+        for target in agent_svc_nodes:
+            target_label_lower = target["label"].lower()
+            if (concept_label_lower in target_label_lower or
+                target_label_lower in concept_label_lower):
+                all_edges.append({
+                    "source": concept["id"],
+                    "target": target["id"],
+                    "label": "describes",
+                    "type": "describes",
+                })
+
+    result = {
+        "nodes": all_nodes,
+        "edges": all_edges,
+        "stats": {
+            "total_nodes": len(all_nodes),
+            "total_edges": len(all_edges),
+            "code_nodes": len([n for n in all_nodes if n.get("file_type") == "code"]),
+            "doc_nodes": len([n for n in all_nodes if n.get("file_type") == "doc"]),
+            "concept_nodes": len([n for n in all_nodes if n.get("file_type") == "concept"]),
+            "agent_nodes": len([n for n in all_nodes if n.get("file_type") == "agent"]),
+            "service_nodes": len([n for n in all_nodes if n.get("file_type") == "service"]),
+        },
+    }
+
+    _GRAPH_CACHE = result
+    _GRAPH_CACHE_TIME = time.time()
+    return result
+
+
+@app.get("/api/graph", dependencies=[Depends(verify_token)])
+def graph_data(include_code: bool = True):
+    """Return the unified knowledge graph (code + docs + agents + services)."""
+    graph = _build_unified_graph()
+    if not include_code:
+        # Return only non-code nodes for a lighter view
+        nodes = [n for n in graph["nodes"] if n.get("file_type") != "code"]
+        # Filter edges to only include those with valid node ids
+        node_ids = {n["id"] for n in nodes}
+        edges = [e for e in graph["edges"] if e.get("source") in node_ids and e.get("target") in node_ids]
+        return {"nodes": nodes, "edges": edges, "stats": graph["stats"]}
+    return graph
+
+
+@app.get("/api/graph/search", dependencies=[Depends(verify_token)])
+def graph_search(q: str = "", limit: int = 20):
+    """Semantic search across the knowledge graph. Falls back to text match if embedding fails."""
+    if not q:
+        return {"query": "", "results": [], "highlighted_nodes": []}
+
+    graph = _build_unified_graph()
+
+    # Try pgvector semantic search first
+    highlighted_ids: list[str] = []
+    try:
+        embedding = _graph_embed(q)
+        if embedding:
+            conn = _db()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT node_id, content, 1 - (embedding <=> %s::vector) AS similarity
+                FROM graph_nodes
+                WHERE 1 - (embedding <=> %s::vector) > 0.4
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+            """, (str(embedding), str(embedding), str(embedding), limit))
+            results = cur.fetchall()
+            conn.close()
+            highlighted_ids = [r["node_id"] for r in results]
+            return {
+                "query": q,
+                "results": results,
+                "highlighted_nodes": highlighted_ids,
+            }
+    except Exception:
+        pass
+
+    # Fallback: text-based search across node labels and content
+    q_lower = q.lower()
+    matches = []
+    for node in graph["nodes"]:
+        label = (node.get("label") or "").lower()
+        content = (node.get("content") or "").lower()
+        source = (node.get("source_file") or "").lower()
+
+        score = 0
+        if q_lower in label:
+            score = 0.9
+        elif q_lower in content:
+            score = 0.7
+        elif q_lower in source:
+            score = 0.5
+
+        if score > 0:
+            matches.append({
+                "node_id": node["id"],
+                "content": node.get("content", node.get("label", "")),
+                "similarity": score,
+            })
+
+    matches.sort(key=lambda x: x["similarity"], reverse=True)
+    matches = matches[:limit]
+    highlighted_ids = [m["node_id"] for m in matches]
+
+    return {
+        "query": q,
+        "results": matches,
+        "highlighted_nodes": highlighted_ids,
+    }
+
+
+def _graph_embed(text: str) -> list[float] | None:
+    """Generate embedding via Ollama for graph search."""
+    try:
+        ollama_url = os.environ.get("OLLAMA_URL", "http://ollama:11434")
+        resp = _httpx.post(
+            f"{ollama_url}/api/embeddings",
+            json={"model": "nomic-embed-text", "prompt": text[:500]},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()["embedding"]
+    except Exception:
+        return None
+
+
+def _init_graph_table():
+    """Create the graph_nodes table for semantic search if it doesn't exist."""
+    try:
+        conn = _db()
+        cur = conn.cursor()
+        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS graph_nodes (
+                id SERIAL PRIMARY KEY,
+                node_id TEXT UNIQUE NOT NULL,
+                label TEXT,
+                content TEXT,
+                file_type TEXT,
+                community_name TEXT,
+                embedding vector(768),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_graph_nodes_node_id ON graph_nodes(node_id)")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+@app.post("/api/graph/index", dependencies=[Depends(verify_token)])
+def graph_index():
+    """Re-index graph nodes into pgvector for semantic search. Call after graph data changes."""
+    _init_graph_table()
+    graph = _build_unified_graph()
+
+    # Index non-code nodes (docs, concepts, agents, services) — code nodes are too numerous
+    indexable = [n for n in graph["nodes"] if n.get("file_type") in ("doc", "concept", "agent", "service")]
+
+    indexed = 0
+    errors = 0
+    conn = _db()
+    cur = conn.cursor()
+
+    for node in indexable:
+        text = f"{node.get('label', '')} — {node.get('content', '')}".strip()
+        if not text or text == "—":
+            continue
+
+        embedding = _graph_embed(text)
+        if not embedding:
+            errors += 1
+            continue
+
+        try:
+            cur.execute("""
+                INSERT INTO graph_nodes (node_id, label, content, file_type, community_name, embedding, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (node_id) DO UPDATE SET
+                    label = EXCLUDED.label,
+                    content = EXCLUDED.content,
+                    file_type = EXCLUDED.file_type,
+                    community_name = EXCLUDED.community_name,
+                    embedding = EXCLUDED.embedding,
+                    updated_at = NOW()
+            """, (node["id"], node.get("label"), node.get("content"), node.get("file_type"), node.get("community_name"), embedding))
+            indexed += 1
+        except Exception:
+            errors += 1
+            conn.rollback()
+            cur = conn.cursor()
+
+    conn.commit()
+    conn.close()
+
+    return {"indexed": indexed, "errors": errors, "total_candidates": len(indexable)}
+
+
+# Initialize graph table on startup
+_init_graph_table()
+
+
+# Health monitor is started via lifespan context manager (see top of file)
 
 
 # ── Contracts Tab ─────────────────────────────────────────────────────────────
@@ -572,6 +1409,13 @@ def contracts_darius(body: dict):
     """Proxy to Darius agent for contract intelligence."""
     import httpx as _hx
     prompt = body.get("message", "")
+
+    # Pre-flight: confirm Darius is alive (fast, 5s timeout)
+    try:
+        _hx.get("http://darius-agent:8000/health", timeout=5)
+    except Exception:
+        return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
+
     conn = _db()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT id, client, role, net_rate, status, outstanding, end_date FROM contracts ORDER BY created_at DESC")
@@ -584,11 +1428,13 @@ def contracts_darius(body: dict):
     try:
         r = _hx.post(
             "http://darius-agent:8000/task",
-            json={"task": f"[Contract Management] {context}\n\nUser: {prompt}", "project": "melanin-contracts", "session_id": "hud-contracts"},
-            timeout=60,
+            json={"task": f"[Contract Management] {context}\n\nUser: {prompt}", "project": "melanin-contracts", "session_id": "hud-contracts", "model_source": "local"},
+            timeout=300,
         )
         data = r.json()
         return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except _hx.TimeoutException:
+        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
 
@@ -641,15 +1487,24 @@ def governance_darius(body: dict):
     """Proxy to Darius for governance/compliance questions."""
     import httpx as _hx
     prompt = body.get("message", "")
+
+    # Pre-flight: confirm Darius is alive (fast, 5s timeout)
+    try:
+        _hx.get("http://darius-agent:8000/health", timeout=5)
+    except Exception:
+        return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
+
     gov_dir = "/app/governance" if os.path.isdir("/app/governance") else os.path.join(os.path.dirname(__file__), "../../governance")
     policies = [f.replace(".md", "") for f in os.listdir(gov_dir) if f.endswith(".md")]
     context = f"Governance policies: {', '.join(policies)}. Ask about any specific policy for details."
     try:
         r = _hx.post("http://darius-agent:8000/task",
-            json={"task": f"[Governance & Compliance] {context}\n\nUser: {prompt}", "project": "melanin-governance", "session_id": "hud-governance"},
-            timeout=60)
+            json={"task": f"[Governance & Compliance] {context}\n\nUser: {prompt}", "project": "melanin-governance", "session_id": "hud-governance", "model_source": "local"},
+            timeout=300)
         data = r.json()
         return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except _hx.TimeoutException:
+        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
 
@@ -669,6 +1524,7 @@ def sre_internal():
         "docker-qa-agent-1", "docker-mcp-github-1", "docker-mcp-postgres-1",
         "docker-mcp-figma-1", "docker-mcp-fetch-1", "docker-playwright-mcp-1",
         "docker-security-watchdog-1", "docker-redis-1", "docker-vaultwarden-1",
+        "docker-sre-agent-1",
     ]
     services = []
     for name in internal_services:
@@ -764,12 +1620,21 @@ def sre_darius(body: dict):
     import httpx as _hx
     prompt = body.get("message", "")
     scope = body.get("scope", "all")
+
+    # Pre-flight: confirm Darius is alive (fast, 5s timeout)
+    try:
+        _hx.get("http://darius-agent:8000/health", timeout=5)
+    except Exception:
+        return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
+
     try:
         r = _hx.post("http://darius-agent:8000/task",
-            json={"task": f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. User: {prompt}", "project": "melanin-sre", "session_id": "hud-sre"},
-            timeout=60)
+            json={"task": f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. User: {prompt}", "project": "melanin-sre", "session_id": "hud-sre", "model_source": "local"},
+            timeout=300)
         data = r.json()
         return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except _hx.TimeoutException:
+        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
 
@@ -882,3 +1747,349 @@ def charts_tickets():
     for r in opened:
         r["date"] = str(r["date"])
     return {"opened_trend": opened, "by_agent": by_agent}
+
+
+# ── LLM Observability ─────────────────────────────────────────────────────────
+
+@app.get("/api/llm/observability", dependencies=[Depends(verify_token)])
+def llm_observability():
+    """Full LLM observability dashboard data."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Recent traces (last 50)
+    cur.execute("SELECT trace_id, agent, model, task_preview, input_tokens, output_tokens, latency_ms, status, cached, cost_usd, created_at FROM llm_traces ORDER BY created_at DESC LIMIT 50")
+    traces = cur.fetchall()
+
+    # Failure summary
+    cur.execute("SELECT failure_type, COUNT(*) as count FROM llm_failures WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY failure_type ORDER BY count DESC")
+    failures = cur.fetchall()
+
+    # Unresolved failures
+    cur.execute("SELECT id, agent, model, failure_type, error_message, created_at FROM llm_failures WHERE resolved = FALSE ORDER BY created_at DESC LIMIT 20")
+    unresolved = cur.fetchall()
+
+    # SLO status
+    cur.execute("SELECT name, description, metric, target FROM llm_slos")
+    slos = cur.fetchall()
+
+    # Current SLI values (computed from traces)
+    cur.execute("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'success') as success, PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) as p95_latency, SUM(input_tokens) as total_input_tokens, COUNT(*) FILTER (WHERE cached = TRUE) as cache_hits FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours'")
+    sli_row = cur.fetchone()
+
+    # Error budget consumption
+    total = sli_row["total"] or 1
+    success = sli_row["success"] or 0
+    availability = (success / total) * 100 if total > 0 else 100
+    error_rate = 100 - availability
+    cache_hit_rate = ((sli_row["cache_hits"] or 0) / total) * 100 if total > 0 else 0
+
+    sli_values = {
+        "availability": round(availability, 2),
+        "latency_p95_ms": int(sli_row["p95_latency"] or 0),
+        "error_rate": round(error_rate, 2),
+        "tokens_today": sli_row["total_input_tokens"] or 0,
+        "cache_hit_rate": round(cache_hit_rate, 1),
+        "total_calls_24h": total,
+    }
+
+    # Latency trend (hourly avg, last 24h)
+    cur.execute("SELECT date_trunc('hour', created_at) as hour, AVG(latency_ms) as avg_latency, COUNT(*) as calls FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY hour ORDER BY hour")
+    latency_trend = cur.fetchall()
+
+    conn.close()
+
+    # Serialize
+    for t in traces:
+        t["created_at"] = t["created_at"].isoformat() if t.get("created_at") else None
+        t["cost_usd"] = float(t["cost_usd"]) if t.get("cost_usd") else 0
+    for f in unresolved:
+        f["created_at"] = f["created_at"].isoformat() if f.get("created_at") else None
+    for l in latency_trend:
+        l["hour"] = l["hour"].isoformat() if l.get("hour") else None
+        l["avg_latency"] = int(l["avg_latency"]) if l.get("avg_latency") else 0
+
+    return {
+        "traces": traces,
+        "failures": failures,
+        "unresolved_failures": unresolved,
+        "slos": slos,
+        "sli_values": sli_values,
+        "latency_trend": latency_trend,
+        "per_agent": _get_per_agent_sli(conn_str=_DSN),
+        "error_budgets": _get_error_budgets(conn_str=_DSN),
+        "local_vs_cloud": _get_local_vs_cloud(conn_str=_DSN),
+    }
+
+
+def _get_per_agent_sli(conn_str: str) -> list:
+    """Per-agent SLI breakdown."""
+    try:
+        conn = psycopg2.connect(conn_str)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT agent,
+                COUNT(*) as total_calls,
+                COUNT(*) FILTER (WHERE status='success') as successes,
+                COUNT(*) FILTER (WHERE status != 'success') as failures,
+                COALESCE(AVG(latency_ms) FILTER (WHERE status='success'), 0) as avg_latency_ms,
+                COALESCE(SUM(cost_usd), 0) as total_cost,
+                COUNT(*) FILTER (WHERE cached=TRUE) as cache_hits
+            FROM llm_traces
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+            GROUP BY agent
+            ORDER BY total_calls DESC
+        """)
+        results = cur.fetchall()
+        conn.close()
+        for r in results:
+            r["avg_latency_ms"] = int(r["avg_latency_ms"])
+            r["total_cost"] = float(r["total_cost"])
+            r["availability"] = round((r["successes"] / max(r["total_calls"], 1)) * 100, 1)
+        return results
+    except Exception:
+        return []
+
+
+def _get_error_budgets(conn_str: str) -> list:
+    """Latest error budget status per SLO."""
+    try:
+        conn = psycopg2.connect(conn_str)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT DISTINCT ON (slo_name) slo_name, budget_total, budget_consumed, budget_remaining, status, created_at
+            FROM llm_error_budgets
+            ORDER BY slo_name, created_at DESC
+        """)
+        results = cur.fetchall()
+        conn.close()
+        for r in results:
+            r["budget_total"] = float(r["budget_total"]) if r["budget_total"] else 0
+            r["budget_consumed"] = float(r["budget_consumed"]) if r["budget_consumed"] else 0
+            r["budget_remaining"] = float(r["budget_remaining"]) if r["budget_remaining"] else 0
+            r["created_at"] = r["created_at"].isoformat() if r.get("created_at") else None
+        return results
+    except Exception:
+        return []
+
+
+def _get_local_vs_cloud(conn_str: str) -> dict:
+    """Compare local (Ollama) vs cloud (Claude) model performance from Darius traces."""
+    try:
+        conn = psycopg2.connect(conn_str)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Query darius_traces for HUD sessions (which use local models)
+        # Group by model to compare local vs cloud performance
+        cur.execute("""
+            SELECT
+                model,
+                COUNT(*) as total_calls,
+                COUNT(*) FILTER (WHERE status = 'success') as successes,
+                COUNT(*) FILTER (WHERE status != 'success') as failures,
+                COALESCE(AVG(latency_ms) FILTER (WHERE status = 'success'), 0) as avg_latency_ms,
+                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) as p95_latency_ms,
+                COALESCE(AVG(tokens_out) FILTER (WHERE status = 'success'), 0) as avg_tokens_out
+            FROM darius_traces
+            WHERE created_at > NOW() - INTERVAL '7 days'
+              AND phase = 'complete'
+              AND model IS NOT NULL
+            GROUP BY model
+            ORDER BY total_calls DESC
+        """)
+        by_model = cur.fetchall()
+
+        # Fallback events (local → cloud)
+        cur.execute("""
+            SELECT COUNT(*) as fallback_count
+            FROM darius_traces
+            WHERE created_at > NOW() - INTERVAL '7 days'
+              AND phase = 'fallback'
+        """)
+        fallback_row = cur.fetchone()
+        fallback_count = fallback_row["fallback_count"] if fallback_row else 0
+
+        conn.close()
+
+        # Categorize into local vs cloud
+        local_models = []
+        cloud_models = []
+        for m in by_model:
+            m["avg_latency_ms"] = int(m["avg_latency_ms"])
+            m["p95_latency_ms"] = int(m["p95_latency_ms"])
+            m["avg_tokens_out"] = int(m["avg_tokens_out"])
+            m["availability"] = round((m["successes"] / max(m["total_calls"], 1)) * 100, 1)
+
+            if m["model"] and ("mistral" in m["model"].lower() or "qwen" in m["model"].lower()):
+                local_models.append(m)
+            else:
+                cloud_models.append(m)
+
+        return {
+            "local": local_models,
+            "cloud": cloud_models,
+            "fallback_count_7d": fallback_count,
+        }
+    except Exception:
+        return {"local": [], "cloud": [], "fallback_count_7d": 0}
+
+
+@app.post("/api/llm/darius", dependencies=[Depends(verify_token)])
+def llm_darius(body: dict):
+    """Proxy to Darius for LLM observability questions — SLO breaches, error budgets, model performance."""
+    import httpx as _hx
+    prompt = body.get("message", "")
+
+    # Pre-flight: confirm Darius is alive (fast, 5s timeout)
+    try:
+        _hx.get("http://darius-agent:8000/health", timeout=5)
+    except Exception:
+        return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
+
+    # Gather LLM context for Darius
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT name, target, metric FROM llm_slos")
+    slos = cur.fetchall()
+    cur.execute("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='success') as success, COUNT(*) FILTER (WHERE cached=TRUE) as cached FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours'")
+    stats = cur.fetchone()
+    cur.execute("SELECT failure_type, COUNT(*) as count FROM llm_failures WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY failure_type ORDER BY count DESC LIMIT 5")
+    failures = cur.fetchall()
+    cur.execute("SELECT agent, COUNT(*) as calls, COUNT(*) FILTER (WHERE status='success') as ok FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY agent ORDER BY calls DESC")
+    agents = cur.fetchall()
+    budgets = _get_error_budgets(conn_str=_DSN)
+    conn.close()
+
+    total = stats["total"] or 0
+    success = stats["success"] or 0
+    availability = round((success / max(total, 1)) * 100, 1)
+    cache_rate = round(((stats["cached"] or 0) / max(total, 1)) * 100, 1)
+    slo_summary = "; ".join(f"{s['name']}: target {s['target']} ({s['metric']})" for s in slos)
+    failure_summary = ", ".join(f"{f['failure_type']}({f['count']})" for f in failures) or "none"
+    agent_summary = "; ".join(f"{a['agent']}: {a['calls']} calls ({a['ok']} ok)" for a in agents)
+    budget_summary = "; ".join(f"{b['slo_name']}: {b['status']} ({b['budget_consumed']:.1f}/{b['budget_total']:.1f})" for b in budgets) or "no data"
+
+    context = (
+        f"LLM Observability (24h): {total} calls, {availability}% availability, {cache_rate}% cache hit. "
+        f"SLOs: {slo_summary}. Failures (7d): {failure_summary}. "
+        f"Per-agent: {agent_summary}. Error budgets: {budget_summary}."
+    )
+
+    try:
+        r = _hx.post("http://darius-agent:8000/task",
+            json={"task": f"[LLM Observability] {context}\n\nUser: {prompt}", "project": "melanin-llm", "session_id": "hud-llm", "model_source": "local"},
+            timeout=300)
+        data = r.json()
+        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+    except _hx.TimeoutException:
+        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
+    except Exception as e:
+        return {"reply": f"Darius unavailable: {e}"}
+
+
+# ── Endpoint Health Monitoring ────────────────────────────────────────────────
+
+_endpoint_alerts: set = set()
+
+def _check_endpoint_health():
+    """Check key service endpoints every 5 min via the FULL CHAIN (through nginx). Alert Slack if unreachable."""
+    global _endpoint_alerts
+    # Probe through nginx (same path as real users) — catches stale IP issues
+    endpoints = {
+        "melanin-tech.com": "http://host.docker.internal:443",
+        "HUD": "http://host.docker.internal:4000/api/health",
+        "OrthoFlow": "http://host.docker.internal:5173",
+        "OrthoFlow API": "http://host.docker.internal:8000/health",
+        "nginx": "http://host.docker.internal:80",
+    }
+
+    for name, url in endpoints.items():
+        try:
+            r = _httpx.get(url, timeout=5, follow_redirects=True)
+            if r.status_code < 500:
+                # Recovered
+                if name in _endpoint_alerts:
+                    _endpoint_alerts.discard(name)
+                    _send_alert(f"✅ *Recovered:* {name} is back online")
+            elif r.status_code == 502:
+                # 502 = nginx can't reach upstream — auto-reload nginx
+                try:
+                    import subprocess
+                    subprocess.run(["docker", "exec", "docker-nginx-1", "nginx", "-s", "reload"], capture_output=True, timeout=5)
+                except Exception:
+                    pass
+                if name not in _endpoint_alerts:
+                    _endpoint_alerts.add(name)
+                    _send_alert(f"🟡 *{name}:* 502 Bad Gateway — nginx reloaded automatically")
+            else:
+                raise Exception(f"HTTP {r.status_code}")
+        except Exception as e:
+            if name not in _endpoint_alerts:
+                _endpoint_alerts.add(name)
+                _send_alert(f"🔴 *Service Down:* {name} — {e}")
+
+
+# ── Daily Email Triage ────────────────────────────────────────────────────────
+
+def _run_daily_email_triage():
+    """Triage CEO inbox and post summary to Slack every morning."""
+    try:
+        import json, sys
+        sys.path.insert(0, '/app')
+
+        creds_path = "/app/integrations/credentials/ceo/gmail.json"
+        if not os.path.exists(creds_path):
+            return
+
+        from integrations.gmail import GmailConnector
+        creds = json.load(open(creds_path))
+        gmail = GmailConnector('ceo', creds)
+
+        if not gmail.health_check():
+            _send_alert("⚠️ Daily email triage failed — Gmail auth expired. Re-run auth flow.")
+            return
+
+        inbox = gmail.read_inbox(max_results=15, query="is:unread")
+        if not inbox:
+            return  # No unread, no report needed
+
+        # Classify
+        categories = {"🟢 Prospect": [], "👤 Client": [], "🔴 Security": [], "💰 Finance": [], "🔧 Vendor": [], "📬 Other": []}
+        for e in inbox:
+            sender = e.get("from", "").lower()
+            subject = e.get("subject", "").lower()
+            display = f"{e.get('from', '')[:30]} — {e.get('subject', '')[:45]}"
+
+            if any(k in subject for k in ["opportunity", "project", "proposal", "interested", "quote", "inquiry"]):
+                categories["🟢 Prospect"].append(display)
+            elif any(k in sender for k in ["orthoflow", "marcallen", "heldtogether", "htc"]):
+                categories["👤 Client"].append(display)
+            elif any(k in subject for k in ["security", "alert", "breach", "unauthorized"]):
+                categories["🔴 Security"].append(display)
+            elif any(k in subject for k in ["invoice", "payment", "bill", "declined", "overdue"]):
+                categories["💰 Finance"].append(display)
+            elif any(k in sender for k in ["google", "slack", "github", "cloudflare", "docker"]):
+                categories["🔧 Vendor"].append(display)
+            else:
+                categories["📬 Other"].append(display)
+
+        # Build Slack message
+        lines = [f"📬 *Daily Email Triage* — {len(inbox)} unread", ""]
+        for cat, emails in categories.items():
+            if emails:
+                lines.append(f"*{cat}* ({len(emails)})")
+                for e in emails[:3]:
+                    lines.append(f"  • {e}")
+                if len(emails) > 3:
+                    lines.append(f"  _...and {len(emails)-3} more_")
+                lines.append("")
+
+        # Flag urgent items
+        urgent = categories["🟢 Prospect"] + categories["🔴 Security"] + categories["💰 Finance"]
+        if urgent:
+            lines.append(f"⚡ *{len(urgent)} items need attention*")
+
+        _send_alert("\n".join(lines))
+
+    except Exception:
+        pass
