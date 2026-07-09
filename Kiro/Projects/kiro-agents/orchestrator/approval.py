@@ -180,6 +180,170 @@ def execute_proposal(proposal: dict) -> str:
     project_path = args.get("project_path", "")
     proposal_text = args["proposal"]
 
+    if action == "dba":
+        # DBA reports go directly to Slack as readable output
+        return f"📊 *DBA Report*\n\n{proposal_text}"
+
+    if action == "slack_post":
+        # Orchestrator posts content directly to a Slack channel
+        from config.settings import SLACK_BOT_TOKEN
+        import httpx as _hx
+        target_channel = args.get("target_channel") or os.environ.get("SLACK_CHANNEL_ID", "")
+        content = args.get("content", proposal_text)
+
+        if not target_channel:
+            return "⚠️ No target channel specified and no default channel configured."
+
+        # Split content into chunks (Slack 4000 char limit)
+        chunks = []
+        current = ""
+        for line in content.split("\n"):
+            if len(current) + len(line) + 1 > 3900 and current:
+                chunks.append(current)
+                current = line
+            else:
+                current += "\n" + line if current else line
+        if current:
+            chunks.append(current)
+
+        try:
+            # Post first chunk as main message
+            r = _hx.post("https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}", "Content-Type": "application/json"},
+                json={"channel": target_channel, "text": chunks[0], "unfurl_links": False},
+                timeout=10)
+            data = r.json()
+            if not data.get("ok"):
+                return f"⚠️ Slack post failed: {data.get('error')}"
+
+            ts = data["ts"]
+            # Post remaining chunks as thread replies
+            for chunk in chunks[1:]:
+                _hx.post("https://slack.com/api/chat.postMessage",
+                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}", "Content-Type": "application/json"},
+                    json={"channel": target_channel, "text": chunk, "thread_ts": ts, "unfurl_links": False},
+                    timeout=10)
+
+            return f"✅ Posted to <#{target_channel}> ({len(chunks)} message{'s' if len(chunks) > 1 else ''}, {len(content):,} chars)"
+        except Exception as e:
+            return f"⚠️ Slack post error: {e}"
+
+    if action == "file_write_direct":
+        # Orchestrator writes content directly to a file path
+        target_file = args.get("target_file", "")
+        content = args.get("content", proposal_text)
+
+        if not target_file:
+            return "⚠️ No target file path specified."
+
+        try:
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+            with open(target_file, "w") as f:
+                f.write(content)
+            return f"✅ Written to `{target_file}` ({len(content):,} chars)"
+        except Exception as e:
+            return f"⚠️ File write error: {e}"
+
+    if action == "email":
+        # Orchestrator sends email via SMTP
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.base import MIMEBase
+        from email import encoders
+
+        recipient = args.get("recipient")
+        attachment_path = args.get("attachment_path")
+        attachment_name = args.get("attachment_name")
+        body = args.get("body", "")
+
+        if not recipient:
+            return "⚠️ No recipient email address specified."
+
+        smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+        smtp_user = os.environ.get("SMTP_USERNAME", os.environ.get("VAULTWARDEN_SMTP_USERNAME", ""))
+        smtp_pass = os.environ.get("SMTP_PASSWORD", os.environ.get("VAULTWARDEN_SMTP_PASSWORD", ""))
+        from_addr = smtp_user or "developer.integrator@melanin-tech.com"
+
+        if not smtp_user or not smtp_pass:
+            return "⚠️ SMTP credentials not configured. Set SMTP_USERNAME and SMTP_PASSWORD env vars."
+
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = f"Melanin Technologies <{from_addr}>"
+            msg["To"] = recipient
+            msg["Subject"] = f"Document: {attachment_name}" if attachment_name else "From Melanin Technologies"
+
+            # Body
+            if body:
+                # Truncate for email (keep it reasonable)
+                email_body = body[:5000] + ("\n\n[truncated — full document attached]" if len(body) > 5000 else "")
+            else:
+                email_body = f"Please find the attached document: {attachment_name}" if attachment_name else "Document from Melanin Technologies."
+
+            msg.attach(MIMEText(email_body, "plain"))
+
+            # Attachment
+            if attachment_path and os.path.exists(attachment_path):
+                with open(attachment_path, "rb") as f:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", f"attachment; filename={attachment_name or 'document'}")
+                msg.attach(part)
+            elif attachment_name:
+                return f"⚠️ Attachment `{attachment_name}` not found on disk. Cannot send."
+
+            # Send
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+
+            return f"✅ Email sent to {recipient}" + (f" with attachment `{attachment_name}`" if attachment_path else "")
+        except Exception as e:
+            return f"⚠️ Email send failed: {e}"
+
+    if action == "sre":
+        # SRE: post concise summary to Slack, full report available in HUD
+        import docker as _docker
+        import psycopg2 as _pg
+        try:
+            client = _docker.from_env()
+            all_c = client.containers.list(all=True)
+            our = [c for c in all_c if c.name.startswith("docker-") or c.name.startswith("orthoflow-")]
+            running = [c for c in our if c.status == "running"]
+            down = [c.name.replace("docker-", "").replace("-1", "") for c in our if c.status != "running"]
+
+            agents = ["orchestrator", "frontend-agent", "backend-agent", "deploy-agent", "scaffold-agent", "support-agent", "code-agent", "file-agent", "uxui-agent", "qa-agent", "sre-agent", "darius-agent"]
+            agents_down = [a.replace("-agent", "") for a in agents if not any(c.name == f"docker-{a}-1" and c.status == "running" for c in all_c)]
+
+            conn = _pg.connect(os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro"))
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours'")
+            llm_calls = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM llm_failures WHERE created_at > NOW() - INTERVAL '24 hours'")
+            llm_fails = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM tickets WHERE status='open'")
+            open_tix = cur.fetchone()[0]
+            conn.close()
+
+            infra_status = "🟢" if not down else "🔴"
+            agent_status = "🟢" if not agents_down else "🔴"
+            llm_status = "🟢" if llm_fails == 0 else ("🟡" if llm_fails < 3 else "🔴")
+
+            lines = [
+                "📊 *SRE Status*",
+                f"{infra_status} Infra: {len(running)}/{len(our)} containers" + (f" | Down: {', '.join(down[:3])}" if down else ""),
+                f"{agent_status} Agents: {12 - len(agents_down)}/12 online" + (f" | Off: {', '.join(agents_down)}" if agents_down else ""),
+                f"{llm_status} LLM: {llm_calls} calls, {llm_fails} failures (24h)",
+                f"🎫 Tickets: {open_tix} open",
+            ]
+            return "\n".join(lines)
+        except Exception as e:
+            return f"📊 SRE check completed — full report in HUD\n⚠️ Live summary unavailable: {e}"
+
     if action == "file":
         os.makedirs(project_path, exist_ok=True)
         log_path = os.path.join(project_path, "proposal.md")
@@ -320,6 +484,29 @@ def execute_proposal(proposal: dict) -> str:
         return f"⚠️ Deploy script error:\n```{result.stderr[-1000:]}```"
 
     if action == "code":
+        # Darius (and other agents) may return code blocks that need writing to disk
+        if project_path:
+            written = _write_code_blocks(proposal_text, project_path)
+            if written:
+                files = "\n".join(f"  • `{f}`" for f in written)
+                return f"✅ Written {len(written)} file(s) to `{project_path}`:\n{files}"
+
+            # Retry: ask the LLM to reformat as code blocks
+            from agents.base_agent import _complete, select_model
+            retry_prompt = (
+                "The following proposal needs to be converted into ONLY fenced code blocks with file paths.\n"
+                "Each code block must start with a comment containing the relative file path.\n"
+                "Output NOTHING except code blocks. No explanations.\n\n"
+                f"Project path: {project_path}\n"
+                f"Original proposal:\n{proposal_text[:3000]}"
+            )
+            retry_model = select_model(args.get("task", ""))
+            reformatted = _complete(retry_model, "You convert proposals into fenced code blocks with file path comments. Output ONLY code blocks.", retry_prompt)
+            written = _write_code_blocks(reformatted, project_path)
+            if written:
+                files = "\n".join(f"  • `{f}`" for f in written)
+                return f"✅ Written {len(written)} file(s) to `{project_path}` (reformatted):\n{files}"
+
         return f"💻 Code proposal ready for implementation:\n```{proposal_text[:1000]}```"
 
     return f"✅ Action `{action}` acknowledged."
