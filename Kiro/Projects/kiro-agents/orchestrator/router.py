@@ -65,7 +65,11 @@ def route(task: str, project: str = "default", callback_id: str = None) -> dict:
                 },
             }
 
-    task_lower = enriched_task.lower()
+    # IMPORTANT: Classify based on the ORIGINAL user instruction, not the expanded
+    # ticket context. The expanded text may contain keywords (like "POST", "deploy",
+    # "send") that are part of the ticket's technical description, not the user's intent.
+    # The enriched_task is passed to the executing agent for full context.
+    task_lower = task.lower()
 
     # "list templates" command
     if task_lower.strip() in ("list templates", "templates", "show templates"):
