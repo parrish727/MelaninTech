@@ -119,6 +119,83 @@ def _trigger_qa(project: str, source: str, ref: str = ""):
             pass
 
 
+def _handle_ci_failure(body: dict):
+    """Handle CI pipeline failures — diagnose, alert, and attempt auto-fix.
+
+    Flow:
+    1. Post failure details to Slack (immediate visibility)
+    2. Classify the failure type (test, vulnerability, build)
+    3. For vulnerability failures: create ticket for DevOps to upgrade deps
+    4. For test failures: create ticket for Darius to analyze
+    """
+    import time as _time
+    global _SLACK_APP, _SLACK_CHANNEL
+
+    project = body.get("project", "unknown")
+    failure_job = body.get("failure_job", "unknown")
+    ref = body.get("ref", "")[:8]
+    commit_msg = body.get("commit_message", "")
+
+    logger.info(f"CI failure received: {project} / {failure_job} / {ref}")
+
+    # 1. Immediate Slack alert
+    try:
+        _SLACK_APP.client.chat_postMessage(
+            channel=_SLACK_CHANNEL,
+            text=(
+                f"🔴 *CI Pipeline FAILED* — `{project}`\n"
+                f"*Failed Job:* {failure_job}\n"
+                f"*Commit:* `{ref}`\n"
+                f"*Message:* {commit_msg[:100]}\n\n"
+                f"DevOps + SRE agents reviewing..."
+            ),
+        )
+    except Exception as e:
+        logger.error(f"CI failure Slack alert failed: {e}")
+
+    # 2. Classify and create appropriate ticket
+    from orchestrator.tickets import open_ticket
+
+    if "trivy" in failure_job.lower() or "vulnerability" in failure_job.lower() or "scan" in failure_job.lower():
+        agent = "DevOpsAgent"
+        task = f"CI vulnerability scan failed for {project} (commit {ref}). Auto-fix: upgrade vulnerable dependencies in requirements.txt to patched versions. Run Trivy locally to verify before pushing."
+        action_msg = "DevOps agent will upgrade vulnerable packages"
+        icon = "🔧"
+    elif "test" in failure_job.lower():
+        agent = "DariusAgent"
+        task = f"CI test failure for {project} (commit {ref}: {commit_msg[:80]}). Review test output, identify breaking change, and fix."
+        action_msg = "Darius will analyze the failure and propose a fix"
+        icon = "🧪"
+    else:
+        agent = "DevOpsAgent"
+        task = f"CI build failure for {project} (job: {failure_job}, commit {ref}: {commit_msg[:80]}). Diagnose build error and fix."
+        action_msg = "DevOps agent will diagnose and propose fix"
+        icon = "🏗️"
+
+    try:
+        ticket_id = open_ticket(
+            client="ci-pipeline",
+            task=task,
+            agent=agent,
+            proposal="",
+            callback_id=f"ci-{ref}-{int(_time.time())}",
+            ticket_type="internal",
+            priority="high",
+        )
+
+        _SLACK_APP.client.chat_postMessage(
+            channel=_SLACK_CHANNEL,
+            text=(
+                f"{icon} *CI Failure Ticket Created*\n"
+                f"*Ticket:* #{ticket_id} → {agent}\n"
+                f"*Action:* {action_msg}\n"
+                f"*Approval needed:* Yes"
+            ),
+        )
+    except Exception as e:
+        logger.error(f"CI failure ticket creation failed: {e}")
+
+
 def _run_sre_health_check(project: str, source: str):
     """Post-deploy SRE health verification. Runs after QA passes."""
     import subprocess
@@ -227,6 +304,19 @@ class WebhookHandler(BaseHTTPRequestHandler):
             project = _identify_project(body)
             source = body.get("source", "watchtower")
             ref = body.get("ref", body.get("sha", ""))
+
+            # CI failure — route to DevOps/SRE for diagnosis + auto-fix
+            if source == "ci-failure":
+                threading.Thread(
+                    target=_handle_ci_failure,
+                    args=(body,),
+                    daemon=True,
+                ).start()
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "accepted", "action": "ci-failure-review"}).encode())
+                return
 
             if project:
                 # Run QA in background so we don't block the webhook response
