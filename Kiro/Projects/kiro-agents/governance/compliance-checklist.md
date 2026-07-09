@@ -33,16 +33,45 @@
 | A1.2 | Recovery | Backups + git history + container rebuild | ✅ |
 | P1-P8 | Privacy | Data isolation, retention, deletion procedures | ✅ |
 
-## CMS (Medicare/Medicaid — OrthoFlow v2.1)
+## CMS (Medicare/Medicaid — OrthoFlow Claims)
 
 | Requirement | Implementation | Status |
 |-------------|----------------|--------|
-| HIPAA 837D format | X12 5010 claim generation | 🔲 Ticket #74 |
-| NPI validation | Luhn check + NPPES lookup | 🔲 Ticket #74 |
-| Fee schedule enforcement | State rules engine | 🔲 Ticket #74 |
-| Timely filing tracking | Configurable deadline alerts | 🔲 Ticket #74 |
-| Audit trail for claims | AuditLog extension | 🔲 Ticket #74 |
-| PHI encryption (subscriber IDs) | pgcrypto field-level | 🔲 Ticket #74 |
+| HIPAA 837D format | X12 5010 claim generation | ✅ Built |
+| NPI validation | Luhn check + NPPES lookup | ✅ Built |
+| Fee schedule enforcement | State rules engine | ✅ Built |
+| Timely filing tracking | Configurable deadline alerts | ✅ Built |
+| Audit trail for claims | AuditLog extension | ✅ Built |
+| PHI encryption (subscriber IDs) | pgcrypto field-level | ✅ Built |
+| Clearinghouse integration | API submission to vendor | ⚠️ Pending vendor enrollment per practice |
+| Denial detection | AI-powered denial pattern recognition | ✅ Built |
+| Appeal writing | AI-drafted appeal letters | ✅ Built |
+| ERA/835 processing | Payment posting from remittance advice | ✅ Built |
+
+## TCPA (OrthoFlow — Patient Communications)
+
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| Prior express written consent | Digital consent capture with timestamp + IP | ✅ Built |
+| Opt-out mechanism | STOP keyword processing, one-click unsubscribe | ✅ Built |
+| Consent revocation | Immediate opt-out honored, audit logged | ✅ Built |
+| Time-of-day restrictions | Quiet hours enforcement (before 8am / after 9pm local) | ✅ Built |
+| SMS messaging | Two-way texting infrastructure | ⚠️ Disabled pending legal review |
+| Email reminders | Automated appointment/payment reminders | ✅ Active |
+| Message templates | Pre-approved template library | ✅ Built |
+| Delivery tracking | Dashboard with delivery/bounce/opt-out metrics | ✅ Built |
+| Do-Not-Call list | DNC registry check integration | ✅ Built |
+
+## Imaging (OrthoFlow — Phase 4a)
+
+| Requirement | Implementation | Status |
+|-------------|----------------|--------|
+| PHI protection (stored images) | MinIO server-side encryption enabled | ✅ |
+| PHI protection (DICOM export) | De-identification on export (strips patient metadata) | ✅ |
+| Access control | Practice-scoped, role-gated image access | ✅ |
+| Audit trail | All image view/upload/download events logged | ✅ |
+| Retention policy | Configurable per practice (default: 7 years) | ✅ |
+| Secure upload | ClamAV scan on all uploaded files | ✅ |
 
 ## Infrastructure Security
 
@@ -57,12 +86,12 @@
 | TLS cert auto-renewal | certbot + cert-monitor alerts | ✅ |
 | Secret scanning | guardrail-check.yaml on every change | ✅ |
 | Dependency pinning | Docker images pinned, npm lockfiles | ✅ |
-| Vulnerability scanning | Not automated yet | 🔲 TODO |
+| Vulnerability scanning | Trivy in GitHub Actions CI (OrthoFlow), pre-deploy image scan | ✅ |
 
 ## Gaps to Address
 
-1. **BAA agreements** — need signed BAAs with any hosting/clearinghouse partners
-2. **Vulnerability scanning** — add Trivy or Grype for container image scanning
-3. **Non-root containers** — migrate remaining agents to non-root user in Dockerfile
-4. **Formal penetration test** — schedule annually
-5. **Disaster recovery test** — validate backup restore procedure quarterly
+1. **BAA agreements** — need signed BAAs with clearinghouse vendors (per practice, upon enrollment)
+2. **Non-root containers** — migrate remaining agents to non-root user in Dockerfile
+3. **Formal penetration test** — schedule annually
+4. **Disaster recovery test** — validate backup restore procedure quarterly
+5. **SMS legal review** — patient SMS messaging disabled until TCPA compliance review complete
