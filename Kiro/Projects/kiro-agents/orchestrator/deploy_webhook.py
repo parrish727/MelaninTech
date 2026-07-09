@@ -136,7 +136,7 @@ def _run_sre_health_check(project: str, source: str):
     }
 
     project_health_urls = {
-        "orthoflow-ai": "http://host.docker.internal:8000/health",
+        "orthoflow-ai": "http://host.docker.internal:8000/ready",
         "melanin-tech-website": "http://host.docker.internal:3000/api/health",
         "htc-app": "http://host.docker.internal:8001/health",
         "kiro-agents": None,
