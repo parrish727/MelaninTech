@@ -274,6 +274,10 @@ def handle_message(event, say):
 
 
 if __name__ == "__main__":
+    # Start the deploy webhook listener (HTTP) alongside Slack (Socket Mode)
+    from orchestrator.deploy_webhook import start_webhook_server
+    start_webhook_server(app, SLACK_CHANNEL_ID)
+
     watchdog.init(app, SLACK_CHANNEL_ID)
     watchdog.start()
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)

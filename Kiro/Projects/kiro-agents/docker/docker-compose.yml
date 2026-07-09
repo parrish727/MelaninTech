@@ -9,6 +9,8 @@ x-agent: &agent-base
   env_file: ../.env
   environment:
     - PROJECTS_BASE=/app/Projects
+    - STEERING_DIR=/app/.kiro/steering
+    - PROFILES_DIR=/app/.kiro/agents/profiles
   networks:
     - agent-net
   cap_drop:
@@ -17,6 +19,9 @@ x-agent: &agent-base
   tmpfs:
     - /tmp
   restart: unless-stopped
+  volumes:
+    - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+    - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
 services:
   postgres:
@@ -58,7 +63,11 @@ services:
       - HOST_COMPOSE_FILE=/Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker/docker-compose.yml
       - HOST_ENV_FILE=/Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env
       - HOST_WEBSITE_PATH=/Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
       - PYTHONUNBUFFERED=1
+    ports:
+      - "9090:9090"
     networks:
       - agent-net
     volumes:
@@ -68,8 +77,12 @@ services:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env:/app/.env:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website/public/previews:/app/previews
+      - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness:/app/LinesOfBusiness
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend
+      - /Users/pktech_dev/Documents/MelaninTechnologies/MelaninDocs:/app/MelaninDocs
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "0"
@@ -154,6 +167,23 @@ services:
       - "managed-by=kiro-deploy-agent"
       - "env=production"
 
+  # OrthoFlow marketing website — orthoflowsolutions.com
+  orthoflow-marketing:
+    build:
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/orthoflow-marketing
+      dockerfile: Dockerfile
+    networks:
+      - agent-net
+    ports:
+      - "3010:3000"
+    environment:
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    restart: unless-stopped
+    labels:
+      - "managed-by=kiro-deploy-agent"
+      - "env=production"
+
   # --- Public-facing infrastructure ---
 
   # Melanin Tech HUD — internal monitoring dashboard
@@ -164,15 +194,22 @@ services:
     env_file: ../.env
     environment:
       - POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro
+      - OLLAMA_URL=http://ollama:11434
     networks:
       - agent-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     group_add:
       - "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/governance:/app/governance:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/integrations:/app/integrations:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/MelaninDocs:/app/melanin-docs:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/graphify-out:/app/graphify-out:ro
     depends_on:
       - postgres
+      - ollama
     restart: unless-stopped
 
   hud-frontend:
@@ -219,6 +256,27 @@ services:
       - production-server
     restart: unless-stopped
 
+  # nginx-reload — watches container restarts and auto-reloads nginx
+  nginx-reload:
+    image: docker:cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: >
+      sh -c "while true; do
+        docker events --filter 'event=start' --filter 'type=container' --format '{{.Actor.Attributes.name}}' |
+        while read name; do
+          case \"$$name\" in
+            docker-hud-*|docker-production-*|docker-staging-*|docker-testing-*|docker-preview-*|docker-htc-*|orthoflow-*|docker-vaultwarden-*)
+              sleep 3;
+              docker exec docker-nginx-1 nginx -s reload 2>/dev/null && echo \"[nginx-reload] reloaded for $$name\";
+              ;;
+          esac;
+        done;
+      done"
+    networks:
+      - agent-net
+    restart: unless-stopped
+
   # certbot — obtains and renews Let's Encrypt TLS cert
   certbot:
     image: certbot/certbot:v2.11.0
@@ -231,6 +289,36 @@ services:
                certbot renew --webroot -w /var/www/certbot --quiet;
                sleep 12h & wait $${!};
              done"
+    restart: unless-stopped
+
+  # seo-pipeline — weekly SEO analysis, keyword tracking, and auto-ticket generation
+  # Runs every Sunday at 11pm ET. Sleeps the rest of the time.
+  seo-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: >
+      sh -c "while true; do
+        CURRENT_DAY=$$(date +%u);
+        CURRENT_HOUR=$$(date +%H);
+        if [ \"$$CURRENT_DAY\" = \"7\" ] && [ \"$$CURRENT_HOUR\" = \"23\" ]; then
+          python3 scripts/seo_cron.py;
+          sleep 3600;
+        fi;
+        sleep 1800;
+      done"
+    env_file: ../.env
+    environment:
+      - POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro
+      - SEARXNG_URL=http://searxng:8080
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/integrations:/app/integrations:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/scripts:/app/scripts:ro
+    networks:
+      - agent-net
+    depends_on:
+      - postgres
+      - searxng
     restart: unless-stopped
 
   # fail2ban — bans IPs with repeated bad requests
@@ -285,6 +373,8 @@ services:
     command: ["python", "-m", "uvicorn", "agents.scaffold_agent:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   qa-agent:
     <<: *agent-base
@@ -294,6 +384,33 @@ services:
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
+
+  sre-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.sre_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: false
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/governance:/app/governance:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
+    group_add:
+      - "0"
+
+  dba-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.dba_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   backend-agent:
     <<: *agent-base
@@ -301,6 +418,8 @@ services:
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/backend:/app/orthoflow-backend:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   frontend-agent:
     <<: *agent-base
@@ -308,10 +427,14 @@ services:
     environment:
       - PROJECTS_BASE=/app/Projects
       - MELANIN_WEBSITE_PATH=/app/melanin-tech-website
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:rw
       - /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/frontend:/app/orthoflow-frontend:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   uxui-agent:
     <<: *agent-base
@@ -320,9 +443,13 @@ services:
       - PROJECTS_BASE=/app/Projects
       - MELANIN_WEBSITE_PATH=/app/melanin-tech-website
       - PLAYWRIGHT_MCP_URL=http://playwright-mcp:9001
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   playwright-mcp:
     build:
@@ -345,6 +472,8 @@ services:
       - PROJECTS_BASE=/app/Projects
       - COMPOSE_FILE=/app/docker/docker-compose.yml
       - COMPOSE_ENV=/app/.env
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
     networks:
       - agent-net
     volumes:
@@ -352,6 +481,8 @@ services:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/.env:/app/.env:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/melanin-tech-website:/app/melanin-tech-website:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:
       - "0"
@@ -362,6 +493,8 @@ services:
     command: ["python", "-m", "uvicorn", "agents.support_agent:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   # --- MCP Sidecars ---
   mcp-github:
@@ -413,10 +546,14 @@ services:
       - PROJECTS_BASE=/app/Projects
       - MCP_URL=http://mcp-server:9000
       - DARIUS_MODEL=anthropic/claude-sonnet-4-6
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
     networks:
       - agent-net
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
     restart: unless-stopped
 
   # --- Utility Agents ---
@@ -425,6 +562,8 @@ services:
     command: ["python", "-m", "uvicorn", "agents.code_agent:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/CodeAgent:/app/Projects/CodeAgent:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   file-agent:
     <<: *agent-base
@@ -432,6 +571,8 @@ services:
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/FileAgent:/app/Projects/FileAgent:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/FileAgent/output:/app/Projects/FileAgent/output:rw
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
 
   # ── Held Together Caregiver (HTC) ──────────────────────────────────────────────
 
