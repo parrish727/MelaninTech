@@ -1627,16 +1627,25 @@ def sre_darius(body: dict):
     except Exception:
         return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
 
+    # Use a concise system instruction that prevents Darius from launching
+    # a full multi-step investigation (which times out in the HUD context)
+    task = (
+        f"Answer this SRE question concisely (no tool calls, no multi-step plans). "
+        f"Use your knowledge of the infrastructure. Scope: {scope}.\n\n"
+        f"Question: {prompt}"
+    )
+
     try:
         r = _hx.post("http://darius-agent:8000/task",
-            json={"task": f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. User: {prompt}", "project": "melanin-sre", "session_id": "hud-sre", "model_source": "local"},
-            timeout=300)
+            json={"task": task, "project": "melanin-sre", "session_id": "hud-sre"},
+            timeout=120)
         data = r.json()
-        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+        reply = data.get("args", {}).get("proposal", "No response from Darius.")
+        return {"reply": reply}
     except _hx.TimeoutException:
-        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
+        return {"reply": "Darius is still thinking (request exceeded 2 minutes). For complex troubleshooting, use Slack: `@Kiro task melanin-sre: <your question>`"}
     except Exception as e:
-        return {"reply": f"Darius unavailable: {e}"}
+        return {"reply": f"Darius error: {str(e)[:200]}"}
 
 
 # ── Chart Data (Grafana-style time-series) ────────────────────────────────────
