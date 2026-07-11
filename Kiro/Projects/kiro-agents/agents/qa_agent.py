@@ -42,13 +42,13 @@ PROJECTS = {
         ],
         "auth_endpoints": [
             # Clinical Phase 1 — all require auth (should return 403 without token)
-            ("GET", "/api/v1/patients", 403),
-            ("GET", "/api/v1/schedule", 403),
-            ("GET", "/api/v1/appointments", 403),
-            ("GET", "/api/v1/chairs", 403),
-            ("GET", "/api/v1/dental-assistants", 403),
+            ("GET", "/api/v1/patients", 401),
+            ("GET", "/api/v1/schedule", 401),
+            ("GET", "/api/v1/appointments", 401),
+            ("GET", "/api/v1/chairs", 401),
+            ("GET", "/api/v1/dental-assistants", 401),
             # AP module
-            ("GET", "/api/v1/invoices/", 403),
+            ("GET", "/api/v1/invoices/", 401),
         ],
         "authenticated_tests": [
             # These run with a valid JWT (after login)
