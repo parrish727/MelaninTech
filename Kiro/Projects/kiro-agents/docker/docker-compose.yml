@@ -52,7 +52,11 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull nomic-embed-text && wait"]
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull nomic-embed-text && ollama pull mistral-small:24b && ollama pull qwen3:14b && wait"]
 
   orchestrator:
     build:
@@ -546,8 +550,12 @@ services:
       - PROJECTS_BASE=/app/Projects
       - MCP_URL=http://mcp-server:9000
       - DARIUS_MODEL=anthropic/claude-sonnet-4-6
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_URL=http://ollama:11434
       - STEERING_DIR=/app/.kiro/steering
       - PROFILES_DIR=/app/.kiro/agents/profiles
+    ports:
+      - "8100:8000"
     networks:
       - agent-net
     volumes:
