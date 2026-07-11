@@ -19,12 +19,22 @@ def task(body: dict):
     task_text = body["task"]
     project = body.get("project", "default")
     session_id = body.get("session_id", project)
+    model_source = body.get("model_source")  # "local" for Ollama, None for default (Claude)
+    model_override = body.get("model_override")  # "light" = Haiku, "heavy" = Sonnet/Opus
 
-    result = run_task(task_text, session_id=session_id)
+    result = run_task(task_text, session_id=session_id, model_source=model_source, model_override=model_override)
+
+    # Determine which model was actually used for the response metadata
+    if model_source == "local":
+        model_used = "local/ollama"
+    elif model_override == "light":
+        model_used = "claude-haiku"
+    else:
+        model_used = "claude-sonnet-4-6"
 
     return {
         "agent": "DariusAgent",
-        "model": "claude-sonnet-4-6",
+        "model": model_used,
         "description": f"Darius completed: {task_text[:80]}",
         "action": "code",
         "args": {

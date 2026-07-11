@@ -1616,7 +1616,7 @@ def sre_external():
 
 @app.post("/api/sre/darius", dependencies=[Depends(verify_token)])
 def sre_darius(body: dict):
-    """Proxy to Darius for SRE questions."""
+    """Proxy to Darius for SRE questions. Uses Haiku for fast responses (future: Mistral Small local)."""
     import httpx as _hx
     prompt = body.get("message", "")
     scope = body.get("scope", "all")
@@ -1627,23 +1627,29 @@ def sre_darius(body: dict):
     except Exception:
         return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
 
-    # Use a concise system instruction that prevents Darius from launching
-    # a full multi-step investigation (which times out in the HUD context)
     task = (
-        f"Answer this SRE question concisely (no tool calls, no multi-step plans). "
-        f"Use your knowledge of the infrastructure. Scope: {scope}.\n\n"
-        f"Question: {prompt}"
+        f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. "
+        f"Diagnose and troubleshoot the following. Be thorough but respond within one message.\n\n"
+        f"User: {prompt}"
     )
 
     try:
         r = _hx.post("http://darius-agent:8000/task",
-            json={"task": task, "project": "melanin-sre", "session_id": "hud-sre"},
+            json={
+                "task": task,
+                "project": "melanin-sre",
+                "session_id": "hud-sre",
+                # Force Haiku for HUD chat — fast responses (<15s).
+                # When Mistral Small is deployed locally (Ticket #69, 07/20/2026),
+                # change this to use the local endpoint for <5s responses.
+                "model_override": "light",
+            },
             timeout=120)
         data = r.json()
         reply = data.get("args", {}).get("proposal", "No response from Darius.")
         return {"reply": reply}
     except _hx.TimeoutException:
-        return {"reply": "Darius is still thinking (request exceeded 2 minutes). For complex troubleshooting, use Slack: `@Kiro task melanin-sre: <your question>`"}
+        return {"reply": "Darius is still thinking (exceeded 2 minutes). For complex multi-step troubleshooting, use Slack: `@Kiro task melanin-sre: <your question>`"}
     except Exception as e:
         return {"reply": f"Darius error: {str(e)[:200]}"}
 
