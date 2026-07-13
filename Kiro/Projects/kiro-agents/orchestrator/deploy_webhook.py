@@ -334,6 +334,39 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "ignored", "reason": "unknown project"}).encode())
+
+        elif self.path == "/webhook/change-window/open":
+            # SRE-managed: deploy script calls this to open a change window
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes) if body_bytes else {}
+
+            from orchestrator.watchdog import open_change_window
+            window_id = open_change_window(body.get("service", "unknown"), body.get("deployer", "unknown"))
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"window_id": window_id}).encode())
+
+        elif self.path == "/webhook/change-window/close":
+            # SRE-managed: deploy script calls this to close a change window
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes) if body_bytes else {}
+
+            from orchestrator.watchdog import close_change_window
+            close_change_window(
+                body.get("window_id", -1),
+                body.get("health_result", "unknown"),
+                body.get("notes", ""),
+            )
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "closed"}).encode())
+
         else:
             self.send_response(404)
             self.end_headers()

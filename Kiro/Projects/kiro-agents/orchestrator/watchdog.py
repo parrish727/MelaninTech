@@ -224,6 +224,9 @@ def start():
             _sweep()
             # Check for monitoring gaps (HUD snapshots, SLA tracking)
             check_monitoring_gaps(_slack_app, _slack_channel)
+            # SRE: check for stale change windows + external health
+            check_open_change_windows()
+            check_external_health()
             if time.time() - last_digest >= STATUS_INTERVAL:
                 try:
                     _status_digest()
@@ -321,3 +324,122 @@ def _alert_and_fix(app, channel, reason):
             log.error(f"HUD restart failed: {result.stderr}")
     except Exception as e:
         log.error(f"Auto-fix failed: {e}")
+
+
+# ── Change Window Management (SRE Oversight) ─────────────────────────────────
+# Tracks manual deploys, validates health post-deploy, alerts on failures.
+# Both internal (infrastructure) and external (app.orthoflowsolutions.com).
+
+def open_change_window(service: str, deployer: str) -> int:
+    """Record a change window opening. Called by deploy script or orchestrator."""
+    try:
+        dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
+        conn = psycopg2.connect(dsn)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO change_windows (service, deployer, status) VALUES (%s, %s, 'open') RETURNING id",
+            (service, deployer)
+        )
+        window_id = cur.fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        # SRE notification
+        if _slack_app and _slack_channel:
+            try:
+                _slack_app.client.chat_postMessage(
+                    channel=_slack_channel,
+                    text=f"🟡 *SRE: Change Window #{window_id} OPEN*\n*Service:* `{service}`\n*Deployer:* {deployer}\n*Monitoring:* Health check will verify in 60s",
+                )
+            except Exception:
+                pass
+
+        return window_id
+    except Exception as e:
+        log.error(f"Failed to open change window: {e}")
+        return -1
+
+
+def close_change_window(window_id: int, health_result: str, notes: str = ""):
+    """Close a change window with the result. SRE verifies health."""
+    try:
+        dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
+        conn = psycopg2.connect(dsn)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE change_windows SET status='closed', closed_at=NOW(), health_result=%s, notes=%s WHERE id=%s",
+            (health_result, notes, window_id)
+        )
+        conn.commit()
+        conn.close()
+
+        # SRE notification
+        icon = "🟢" if "healthy" in health_result else "🔴"
+        if _slack_app and _slack_channel:
+            try:
+                _slack_app.client.chat_postMessage(
+                    channel=_slack_channel,
+                    text=f"{icon} *SRE: Change Window #{window_id} CLOSED*\n*Result:* {health_result}\n*Notes:* {notes or 'none'}",
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        log.error(f"Failed to close change window: {e}")
+
+
+def check_open_change_windows():
+    """SRE periodic check: flag any change windows that have been open too long (>15 min)."""
+    try:
+        dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
+        conn = psycopg2.connect(dsn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, service, deployer, started_at FROM change_windows WHERE status='open' AND started_at < NOW() - INTERVAL '15 minutes'"
+        )
+        stale = cur.fetchall()
+        conn.close()
+
+        for window_id, service, deployer, started_at in stale:
+            if _slack_app and _slack_channel:
+                try:
+                    _slack_app.client.chat_postMessage(
+                        channel=_slack_channel,
+                        text=f"🔴 *SRE ALERT: Change Window #{window_id} stuck open >15 min*\n*Service:* `{service}`\n*Deployer:* {deployer}\n*Opened:* {started_at}\n*Action:* Verify deploy completed. Health check may have failed.",
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        log.error(f"Change window check failed: {e}")
+
+
+# ── External Health Monitoring (SRE) ──────────────────────────────────────────
+# Verifies that external-facing services are reachable from the internet perspective.
+
+def check_external_health():
+    """SRE check: verify external endpoints are reachable."""
+    import httpx as _hx
+
+    endpoints = [
+        ("app.orthoflowsolutions.com", "https://app.orthoflowsolutions.com", 200),
+        ("api.orthoflowsolutions.com", "https://api.orthoflowsolutions.com/ready", 200),
+        ("www.melanin-tech.com", "https://www.melanin-tech.com", 200),
+    ]
+
+    for name, url, expected in endpoints:
+        try:
+            r = _hx.get(url, timeout=10, follow_redirects=True)
+            if r.status_code != expected:
+                if _slack_app and _slack_channel:
+                    _slack_app.client.chat_postMessage(
+                        channel=_slack_channel,
+                        text=f"🔴 *SRE External Health FAIL:* `{name}` returned {r.status_code} (expected {expected})",
+                    )
+        except Exception as e:
+            if _slack_app and _slack_channel:
+                try:
+                    _slack_app.client.chat_postMessage(
+                        channel=_slack_channel,
+                        text=f"🔴 *SRE External Health FAIL:* `{name}` unreachable — {str(e)[:100]}",
+                    )
+                except Exception:
+                    pass
