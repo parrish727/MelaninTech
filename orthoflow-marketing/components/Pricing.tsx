@@ -6,7 +6,7 @@ import { Check } from "lucide-react";
 const plans = [
   {
     name: "Starter",
-    description: "Financial automation for growing practices",
+    description: "Accounts payable automation for practices",
     price: "$299",
     period: "per month",
     features: [
@@ -14,19 +14,17 @@ const plans = [
       "AI classification & validation",
       "QuickBooks sync",
       "Approval workflows",
-      "Spend analytics dashboard",
-      "Duplicate & error detection",
-      "Patient portal (view appointments + forms)",
-      "Email appointment reminders",
-      "Email + chat support",
-      "99.9% uptime SLA",
+      "Spend analytics",
+      "Duplicate detection",
+      "Email support",
+      "99.9% uptime",
     ],
     cta: "Request Demo",
     popular: false,
   },
   {
     name: "Clinical",
-    description: "Full platform: scheduling, charting & billing",
+    description: "Complete practice management platform",
     price: "$599",
     period: "per month",
     features: [
@@ -34,16 +32,14 @@ const plans = [
       "Column-based scheduler",
       "DA assignment board",
       "Patient clinical charts",
-      "Orthodontic tooth charting",
-      "AI clinical note dictation",
-      "X-ray & imaging integration",
-      "Appointment reminders (SMS + email)",
-      "Insurance eligibility verification",
-      "AI denial detection + appeal writing",
-      "Treatment timeline predictions",
-      "Financial reporting dashboard",
-      "Patient migration tool",
-      "Priority support",
+      "Tooth charting",
+      "Clinical note assist",
+      "Imaging integration",
+      "Appointment reminders",
+      "Insurance & eligibility",
+      "Patient portal",
+      "Financial reporting",
+      "Denial review & appeals",
     ],
     cta: "Schedule Demo",
     popular: true,
@@ -56,16 +52,11 @@ const plans = [
     features: [
       "Everything in Clinical",
       "Multi-location dashboard",
-      "CBCT 3D imaging integration",
-      "Custom AI model training",
       "Dedicated infrastructure",
-      "Ortho2 / Dentrix integration",
-      "HIPAA BAA included",
-      "Multi-practice data migration",
+      "Data migration included",
       "Custom form builder",
-      "Dedicated edge imaging appliance",
-      "Dedicated account manager",
-      "Phone support + onboarding",
+      "Priority support + onboarding",
+      "Phone support",
     ],
     cta: "Talk to Sales",
     popular: false,
@@ -137,7 +128,7 @@ export default function Pricing() {
         </div>
 
         <p className="text-center text-sm text-gray-500 mt-8">
-          All plans include HIPAA-compliant infrastructure, encrypted data at rest, and full audit trail.
+          All plans include enterprise-grade security, encrypted data, and full audit trail as standard.
           <br />
           Need self-hosted? Contact us for on-premise pricing.
         </p>
