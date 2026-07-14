@@ -6,7 +6,7 @@ import { Check } from "lucide-react";
 const plans = [
   {
     name: "Starter",
-    description: "Accounts payable automation for practices",
+    description: "Account processing & staff management",
     price: "$299",
     period: "per month",
     features: [
@@ -16,7 +16,9 @@ const plans = [
       "Approval workflows",
       "Spend analytics",
       "Duplicate detection",
-      "Email support",
+      "Staff time clock (in/out)",
+      "Payroll hours tracking",
+      "Email + SMS notifications",
       "99.9% uptime",
     ],
     cta: "Request Demo",
