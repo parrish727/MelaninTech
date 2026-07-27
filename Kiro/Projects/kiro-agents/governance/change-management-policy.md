@@ -1,89 +1,53 @@
-# Change Management Policy — Melanin Technologies
+# Change Management Policy
 
-## Purpose
-All code changes across every project must follow this process. No exceptions. No direct pushes to main. This applies to all agents, all interactive sessions, and all automated tasks.
+## Change Flow
 
-## Git Flow (Mandatory)
-
-### 1. Branch
 ```
-git checkout -b <type>/<scope>
-```
-Types: `feat`, `fix`, `chore`, `refactor`, `docs`, `perf`, `test`
-
-Examples:
-- `feat/perio-charting`
-- `fix/patient-messages-cors`
-- `chore/pgbouncer-setup`
-
-### 2. Commit (Conventional Commits)
-```
-git add <specific files>
-git commit -m "<type>(<scope>): <description>"
-```
-- Stage specific files, never `git add .` without reviewing
-- Keep commits atomic — one logical change per commit
-- Message must follow: `type(scope): description`
-
-### 3. Push Branch
-```
-git push -u origin <branch-name>
+Request → Proposal → Review → Approve → Test → Stage → Production
+   │          │         │         │        │       │         │
+ Slack     Agent    Guardrail   Human   Auto    Auto    Slack button
+ /task     generates  hook      in      deploy  deploy   explicit
+           code      scans     Slack   :3002   :3003    approval
 ```
 
-### 4. Open Pull Request
+## Environments
+
+| Environment | Port | Auto-deploy | Purpose |
+|-------------|------|-------------|---------|
+| Testing | 3002 | On approval | Automated verification |
+| Staging | 3003 | After testing passes | Pre-production validation |
+| Production | 3000 | Explicit Slack button only | Live traffic |
+
+## Rules
+
+1. **No direct production changes.** All changes flow through the pipeline.
+2. **Human approval required** for every code change (Slack approve/modify/reject).
+3. **Guardrail hook fires** on every agent/orchestrator file change — blocks violations.
+4. **QA agent runs** after every approved change — flags issues before staging.
+5. **Production deploy requires explicit Slack button click** — never automatic.
+6. **Rollback:** `docker compose up -d --build <service>` with previous git commit.
+
+## Ticket Lifecycle
+
 ```
-gh pr create --title "<type>(<scope>): <description>" --body "<what changed, what was tested>"
+open → in_progress → done
+                  → rejected
+                  → failed_backlog (after 9 retries, normal priority)
+                  → failed_urgent (after 9 retries, urgent priority — stays visible)
 ```
-- PR title: concise, under 70 chars
-- PR body: summary of changes + what was verified
 
-### 5. CI Runs Automatically
-- Tests (pytest, npm audit, Trivy scan)
-- Build (Docker images pushed to GHCR)
-- All checks must pass before merge
+## Audit Trail
 
-### 6. Merge (Auto or Manual Approval)
-- Auto-merge enabled for passing PRs on non-production projects
-- Production projects (OrthoFlow, melanin-tech-website): require human approval
-- Squash merge preferred for feature branches
+Every change is tracked:
+- Git commit history (who, what, when)
+- Ticket log field (append-only timestamped status changes)
+- Slack message thread (proposal + approval decision)
+- pgvector memory (decision stored for future recall)
 
-### 7. Deploy (Automatic)
-- GHCR images updated on merge to main
-- Watchtower detects new images within 5 minutes
-- Containers auto-restart with new code
-- No manual Docker builds on the server
+## Emergency Changes
 
-## What Is NEVER Allowed
-- ❌ Direct push to main/master
-- ❌ Force push (`git push --force`) on any branch
-- ❌ Local `docker build` as a deployment method (bypasses CI)
-- ❌ Manual container restart as a substitute for proper deployment
-- ❌ Skipping CI by pushing directly to main
-- ❌ Leaving changes uncommitted after implementation
-
-## What Agents Must Do After Every Implementation
-1. Verify the build passes locally (`vite build`, `pytest`, etc.)
-2. Create a feature branch
-3. Commit with conventional commit message
-4. Push the branch
-5. Open a PR via `gh pr create`
-6. Confirm CI passes
-7. Verify the deployment lands (check the live URL)
-
-## What Interactive Sessions (Kiro CLI) Must Do
-Same as above. Being in an interactive session with pktech_dev does NOT exempt from this process. The conversation may be live, but the code still goes through the pipeline.
-
-## Emergency Hotfix Process
-Only when production is down (P1 incident):
-1. Branch from main: `git checkout -b hotfix/<description>`
-2. Minimal fix only — no feature work
-3. Push + PR with `[HOTFIX]` prefix
-4. Can be self-approved by pktech_dev
-5. Merge immediately, verify deployment
-
-## Monitoring Deployment
-After merge, verify:
-- CI passes (check GitHub Actions)
-- GHCR image updated (check package registry)
-- Watchtower pulls new image (check container logs or force pull)
-- Live URL reflects changes (test the feature end-to-end)
+For critical production issues:
+1. CEO can approve via Slack immediately (skip testing/staging)
+2. Deploy agent executes directly
+3. Post-incident: QA agent reviews the change retroactively
+4. Incident logged in ticket system with `priority: urgent`
