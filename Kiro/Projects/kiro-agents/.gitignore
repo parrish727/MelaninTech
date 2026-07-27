@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 integrations/credentials/
 governance/change-management-policy.md
+.kiro/steering/
