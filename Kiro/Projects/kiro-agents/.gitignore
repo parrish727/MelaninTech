@@ -1,3 +1,5 @@
 .env
 __pycache__/
 *.pyc
+integrations/credentials/
+governance/change-management-policy.md
