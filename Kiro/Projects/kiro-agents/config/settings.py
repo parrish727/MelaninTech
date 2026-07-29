@@ -17,7 +17,11 @@ AGENT_URLS = {
     "backend":  "http://backend-agent:8000",
     "frontend": "http://frontend-agent:8000",
     "deploy":   "http://deploy-agent:8000",
+    "devops":   "http://deploy-agent:8000",  # alias — CI failure routing
     "support":  "http://support-agent:8000",
+    "sre":      "http://sre-agent:8000",
+    "dba":      "http://dba-agent:8000",
+    "qa":       "http://qa-agent:8000",
     "darius":   "http://darius-agent:8000",
 }
 
