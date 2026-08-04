@@ -35,6 +35,30 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kiro"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agent-net
+    ports:
+      - "6433:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -44,6 +68,21 @@ services:
       - redis_data:/data
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    networks:
+      - agent-net
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   ollama:
     image: ollama/ollama:latest
@@ -166,6 +205,8 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_CHANNEL_ID=${SLACK_CHANNEL_ID}
     restart: unless-stopped
     labels:
       - "managed-by=kiro-deploy-agent"
@@ -174,7 +215,7 @@ services:
   # OrthoFlow marketing website — orthoflowsolutions.com
   orthoflow-marketing:
     build:
-      context: /Users/pktech_dev/Documents/MelaninTechnologies/orthoflow-marketing
+      context: /Users/pktech_dev/Documents/MelaninTechnologies/LinesOfBusiness/Orthodontic_Dental/orthoflow-marketing
       dockerfile: Dockerfile
     networks:
       - agent-net
@@ -183,6 +224,7 @@ services:
     environment:
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      - SLACK_DEMO_WEBHOOK_URL=${SLACK_DEMO_WEBHOOK_URL}
     restart: unless-stopped
     labels:
       - "managed-by=kiro-deploy-agent"
@@ -197,7 +239,7 @@ services:
       dockerfile: Dockerfile
     env_file: ../.env
     environment:
-      - POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro
+      - POSTGRES_DSN=postgresql://kiro:${POSTGRES_PASSWORD}@pgbouncer:5432/kiro
       - OLLAMA_URL=http://ollama:11434
     networks:
       - agent-net
@@ -236,7 +278,7 @@ services:
     restart: unless-stopped
     environment:
       CLOUDFLARE_API_TOKEN: ${CF_API_TOKEN}
-      DOMAINS: melanin-tech.com,www.melanin-tech.com,hud.melanin-tech.com,orthoflowsolutions.com,www.orthoflowsolutions.com,app.orthoflowsolutions.com,api.orthoflowsolutions.com
+      DOMAINS: melanin-tech.com,www.melanin-tech.com,hud.melanin-tech.com,orthoflowsolutions.com,www.orthoflowsolutions.com,app.orthoflowsolutions.com,api.orthoflowsolutions.com,brochure.orthoflowsolutions.com
       PROXIED: "false"
       UPDATE_CRON: "@every 5m"
 
@@ -249,9 +291,14 @@ services:
     volumes:
       - ./nginx/melanintech.conf:/etc/nginx/conf.d/melanintech.conf:ro
       - ./nginx/orthoflow.conf:/etc/nginx/conf.d/orthoflow.conf:ro
+      - ./nginx/brochure.conf:/etc/nginx/conf.d/brochure.conf:ro
+      - ./nginx/calistro-brochure.conf:/etc/nginx/conf.d/calistro-brochure.conf:ro
+      - ./nginx/ppbrochure.conf:/etc/nginx/conf.d/ppbrochure.conf:ro
+      - ./nginx/parcelpro.conf:/etc/nginx/conf.d/parcelpro.conf:ro
       - ./nginx/hud.conf:/etc/nginx/conf.d/hud.conf:ro
       - ./nginx/secrets.conf:/etc/nginx/conf.d/secrets.conf:ro
       - ./nginx/proxy_params:/etc/nginx/proxy_params:ro
+      - ./nginx/parcelpro-brochure:/var/www/parcelpro-brochure:ro
       - certbot-www:/var/www/certbot:ro
       - certbot-certs:/etc/letsencrypt:ro
     networks:
@@ -313,7 +360,7 @@ services:
       done"
     env_file: ../.env
     environment:
-      - POSTGRES_DSN=postgresql://kiro:kiro_secret@postgres:5432/kiro
+      - POSTGRES_DSN=postgresql://kiro:${POSTGRES_PASSWORD}@pgbouncer:5432/kiro
       - SEARXNG_URL=http://searxng:8080
     volumes:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/integrations:/app/integrations:ro
@@ -541,6 +588,25 @@ services:
       - agent-net
     restart: unless-stopped
 
+  # MCP Gateway — custom tools: Slack, Google, Cloudflare, Docker
+  mcp-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "uvicorn", "orchestrator.mcp_gateway:app", "--host", "0.0.0.0", "--port", "9014"]
+    env_file: ../.env
+    environment:
+      - POSTGRES_DSN=postgresql://kiro:${POSTGRES_PASSWORD}@pgbouncer:5432/kiro
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/integrations:/app/integrations:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+    networks:
+      - agent-net
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
   darius-agent:
     build:
       context: ..
@@ -549,11 +615,14 @@ services:
     environment:
       - PROJECTS_BASE=/app/Projects
       - MCP_URL=http://mcp-server:9000
+      - MCP_GATEWAY_URL=http://mcp-gateway:9014
       - DARIUS_MODEL=anthropic/claude-sonnet-4-6
       - REDIS_URL=redis://redis:6379/0
       - OLLAMA_URL=http://ollama:11434
+      - DARIUS_AUTONOMOUS=true
       - STEERING_DIR=/app/.kiro/steering
       - PROFILES_DIR=/app/.kiro/agents/profiles
+      - MODELS_CONFIG=/app/_models.json
     ports:
       - "8100:8000"
     networks:
@@ -562,6 +631,8 @@ services:
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:rw
       - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/_registry.json:/app/_registry.json:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/_models.json:/app/_models.json:ro
     restart: unless-stopped
 
   # --- Utility Agents ---
@@ -686,15 +757,10 @@ services:
       - agent-net
     environment:
       - DOMAIN=https://emerald.melanin-tech.com
-      - SIGNUPS_ALLOWED=true
+      - SIGNUPS_ALLOWED=false
       - ADMIN_TOKEN=${VAULTWARDEN_ADMIN_TOKEN}
-      - SMTP_HOST=smtp.gmail.com
-      - SMTP_PORT=587
-      - SMTP_SECURITY=starttls
-      - SMTP_USERNAME=${VAULTWARDEN_SMTP_USERNAME:-developer.integrator@melanin-tech.com}
-      - SMTP_PASSWORD=${VAULTWARDEN_SMTP_PASSWORD}
-      - SMTP_FROM=developer.integrator@melanin-tech.com
-      - SMTP_FROM_NAME=Melanin Tech Vault
+      - SIGNUPS_VERIFY=false
+      - REQUIRE_DEVICE_EMAIL=false      - SMTP_FROM_NAME=Melanin Tech Vault
     volumes:
       - vaultwarden-data:/data
     restart: unless-stopped
@@ -702,6 +768,7 @@ services:
 volumes:
   pgdata:
   redis_data:
+  qdrant_data:
   ollama_data:
   playwright_screenshots:
   certbot-www:

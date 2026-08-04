@@ -120,15 +120,17 @@ def _trigger_qa(project: str, source: str, ref: str = ""):
 
 
 def _handle_ci_failure(body: dict):
-    """Handle CI pipeline failures — diagnose, alert, and attempt auto-fix.
+    """Handle CI pipeline failures — diagnose, alert, route to agent, and request approval.
 
     Flow:
     1. Post failure details to Slack (immediate visibility)
     2. Classify the failure type (test, vulnerability, build)
-    3. For vulnerability failures: create ticket for DevOps to upgrade deps
-    4. For test failures: create ticket for Darius to analyze
+    3. Route to the appropriate agent for diagnosis + fix proposal
+    4. Post proposal to Slack with approve/reject buttons (human gate)
+    5. On approval → execute_proposal() writes code, runs QA, deploys
     """
     import time as _time
+    import uuid
     global _SLACK_APP, _SLACK_CHANNEL
 
     project = body.get("project", "unknown")
@@ -147,53 +149,131 @@ def _handle_ci_failure(body: dict):
                 f"*Failed Job:* {failure_job}\n"
                 f"*Commit:* `{ref}`\n"
                 f"*Message:* {commit_msg[:100]}\n\n"
-                f"DevOps + SRE agents reviewing..."
+                f"Routing to agent for diagnosis + auto-fix proposal..."
             ),
         )
     except Exception as e:
         logger.error(f"CI failure Slack alert failed: {e}")
 
-    # 2. Classify and create appropriate ticket
-    from orchestrator.tickets import open_ticket
+    # 2. Classify failure and determine routing
+    from config.settings import AGENT_URLS
 
     if "trivy" in failure_job.lower() or "vulnerability" in failure_job.lower() or "scan" in failure_job.lower():
-        agent = "DevOpsAgent"
-        task = f"CI vulnerability scan failed for {project} (commit {ref}). Auto-fix: upgrade vulnerable dependencies in requirements.txt to patched versions. Run Trivy locally to verify before pushing."
-        action_msg = "DevOps agent will upgrade vulnerable packages"
+        agent_key = "deploy"
+        agent_name = "DeployAgent"
+        task = (
+            f"CI vulnerability scan failed for {project} (commit {ref}). "
+            f"Diagnose which packages have CRITICAL/HIGH CVEs. "
+            f"Propose specific version upgrades in requirements.txt or package.json. "
+            f"Use `gh run view --log-failed` or GitHub API to read the Trivy output. "
+            f"Output fenced code blocks with file path comments for the fix."
+        )
         icon = "🔧"
     elif "test" in failure_job.lower():
-        agent = "DariusAgent"
-        task = f"CI test failure for {project} (commit {ref}: {commit_msg[:80]}). Review test output, identify breaking change, and fix."
-        action_msg = "Darius will analyze the failure and propose a fix"
+        agent_key = "darius"
+        agent_name = "DariusAgent"
+        task = (
+            f"CI test failure for {project} (commit {ref}: {commit_msg[:80]}). "
+            f"Read the GitHub Actions test log via `gh run view --log-failed` to identify "
+            f"the exact test that failed and the assertion/error. "
+            f"Propose a targeted fix (code change, not test skip). "
+            f"Output fenced code blocks with file path comments."
+        )
         icon = "🧪"
     else:
-        agent = "DevOpsAgent"
-        task = f"CI build failure for {project} (job: {failure_job}, commit {ref}: {commit_msg[:80]}). Diagnose build error and fix."
-        action_msg = "DevOps agent will diagnose and propose fix"
+        agent_key = "deploy"
+        agent_name = "DeployAgent"
+        task = (
+            f"CI build failure for {project} (job: {failure_job}, commit {ref}: {commit_msg[:80]}). "
+            f"Diagnose the build error from GitHub Actions logs. "
+            f"Identify root cause (missing dependency, syntax error, Docker build issue). "
+            f"Propose a fix with fenced code blocks and file path comments."
+        )
         icon = "🏗️"
 
-    try:
-        ticket_id = open_ticket(
-            client="ci-pipeline",
-            task=task,
-            agent=agent,
-            proposal="",
-            callback_id=f"ci-{ref}-{int(_time.time())}",
-            ticket_type="internal",
-            priority="high",
-        )
+    # 3. Route to agent for proposal generation
+    callback_id = f"ci-{ref}-{int(_time.time())}"
+    agent_url = AGENT_URLS.get(agent_key)
 
-        _SLACK_APP.client.chat_postMessage(
-            channel=_SLACK_CHANNEL,
-            text=(
-                f"{icon} *CI Failure Ticket Created*\n"
-                f"*Ticket:* #{ticket_id} → {agent}\n"
-                f"*Action:* {action_msg}\n"
-                f"*Approval needed:* Yes"
-            ),
+    try:
+        resp = httpx.post(
+            f"{agent_url}/task",
+            json={
+                "task": task,
+                "project": project,
+                "callback_id": callback_id,
+            },
+            timeout=300,
         )
+        resp.raise_for_status()
+        proposal = resp.json()
     except Exception as e:
-        logger.error(f"CI failure ticket creation failed: {e}")
+        logger.error(f"CI failure agent call failed ({agent_key}): {e}")
+        # Fallback: create a ticket without a proposal so it's visible in /tickets
+        from orchestrator.tickets import open_ticket
+        try:
+            ticket_id = open_ticket(
+                client="ci-pipeline",
+                task=task,
+                agent=agent_name,
+                proposal=f"Agent unreachable: {e}",
+                callback_id=callback_id,
+                ticket_type="internal",
+                priority="high",
+            )
+            _SLACK_APP.client.chat_postMessage(
+                channel=_SLACK_CHANNEL,
+                text=(
+                    f"⚠️ *CI Failure — Agent Unreachable*\n"
+                    f"*Ticket:* #{ticket_id}\n"
+                    f"*Agent:* {agent_name} ({agent_url})\n"
+                    f"*Error:* {str(e)[:200]}\n"
+                    f"Manual intervention required."
+                ),
+            )
+        except Exception as inner_e:
+            logger.error(f"Fallback ticket creation also failed: {inner_e}")
+        return
+
+    # 4. Post proposal to Slack with approval buttons (human gate)
+    try:
+        from orchestrator.approval import request_approval
+
+        # Ensure proposal has the expected shape
+        if "args" not in proposal:
+            proposal = {
+                "agent": agent_name,
+                "model": proposal.get("model", "unknown"),
+                "action": "code",
+                "description": f"{icon} CI failure auto-fix for {project} ({failure_job})",
+                "args": {
+                    "task": task,
+                    "project": project,
+                    "project_path": proposal.get("args", {}).get("project_path", f"/app/Projects/{project}"),
+                    "proposal": proposal.get("proposal", str(proposal)),
+                },
+            }
+
+        proposal["_ticket_type"] = "internal"
+        proposal["description"] = f"{icon} CI failure auto-fix: {project} / {failure_job}"
+
+        request_approval(_SLACK_APP, _SLACK_CHANNEL, task, proposal, callback_id)
+        logger.info(f"CI failure proposal posted for approval: {callback_id}")
+
+    except Exception as e:
+        logger.error(f"CI failure approval request failed: {e}")
+        try:
+            _SLACK_APP.client.chat_postMessage(
+                channel=_SLACK_CHANNEL,
+                text=(
+                    f"⚠️ *CI Failure — Approval Post Failed*\n"
+                    f"*Error:* {str(e)[:200]}\n"
+                    f"*Proposal was:* {str(proposal.get('args', {}).get('proposal', ''))[:300]}\n"
+                    f"Manual review required."
+                ),
+            )
+        except Exception:
+            pass
 
 
 def _run_sre_health_check(project: str, source: str):
