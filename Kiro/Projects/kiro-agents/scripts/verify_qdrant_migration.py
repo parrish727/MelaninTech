@@ -44,7 +44,7 @@ logger = logging.getLogger("verify_qdrant")
 EXPECTED_COUNTS = {
     "task_memory": 60,
     "conversation_memory": 134,
-    "graph_nodes": 257,
+    "graph_nodes": 1465,
     "context_summaries": 4,
 }
 
