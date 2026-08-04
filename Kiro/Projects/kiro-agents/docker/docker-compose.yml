@@ -69,6 +69,21 @@ services:
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     restart: unless-stopped
 
+  qdrant:
+    image: qdrant/qdrant:v1.14.0
+    networks:
+      - agent-net
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   ollama:
     image: ollama/ollama:latest
     networks:
@@ -277,11 +292,13 @@ services:
       - ./nginx/melanintech.conf:/etc/nginx/conf.d/melanintech.conf:ro
       - ./nginx/orthoflow.conf:/etc/nginx/conf.d/orthoflow.conf:ro
       - ./nginx/brochure.conf:/etc/nginx/conf.d/brochure.conf:ro
+      - ./nginx/calistro-brochure.conf:/etc/nginx/conf.d/calistro-brochure.conf:ro
       - ./nginx/ppbrochure.conf:/etc/nginx/conf.d/ppbrochure.conf:ro
       - ./nginx/parcelpro.conf:/etc/nginx/conf.d/parcelpro.conf:ro
       - ./nginx/hud.conf:/etc/nginx/conf.d/hud.conf:ro
       - ./nginx/secrets.conf:/etc/nginx/conf.d/secrets.conf:ro
       - ./nginx/proxy_params:/etc/nginx/proxy_params:ro
+      - ./nginx/parcelpro-brochure:/var/www/parcelpro-brochure:ro
       - certbot-www:/var/www/certbot:ro
       - certbot-certs:/etc/letsencrypt:ro
     networks:
@@ -751,6 +768,7 @@ services:
 volumes:
   pgdata:
   redis_data:
+  qdrant_data:
   ollama_data:
   playwright_screenshots:
   certbot-www:
