@@ -1,0 +1,64 @@
+# Golden Test Cases — Core Platform Operations
+# These test cases validate Darius's ability to handle fundamental orchestration tasks.
+# Used by drift_detector and eval_runner for quality gating.
+
+cases:
+  - id: core_route_backend
+    category: routing
+    query: "Add a new API endpoint to handle patient intake forms"
+    project: orthoflow
+    expected_behavior: "Routes to backend agent, mentions FastAPI, Pydantic model"
+    expected_keywords:
+      - FastAPI
+      - endpoint
+      - Pydantic
+
+  - id: core_route_frontend
+    category: routing
+    query: "Update the dashboard to show the new analytics chart"
+    project: orthoflow
+    expected_behavior: "Routes to frontend agent, mentions React components, Tailwind"
+    expected_keywords:
+      - React
+      - component
+      - dashboard
+
+  - id: core_route_sre
+    category: routing
+    query: "Check the health of all containers and report any issues"
+    project: default
+    expected_behavior: "Routes to SRE agent, mentions Docker, health checks, container status"
+    expected_keywords:
+      - container
+      - health
+      - Docker
+
+  - id: core_route_deploy
+    category: routing
+    query: "Deploy the latest changes to the melanin-tech-website"
+    project: melanin-tech-website
+    expected_behavior: "Routes to deploy agent, follows change management, mentions PR/CI"
+    expected_keywords:
+      - deploy
+      - commit
+      - branch
+
+  - id: core_context_recall
+    category: memory
+    query: "What model lineup do we use for Darius?"
+    project: default
+    expected_behavior: "Recalls tiered model selection: Opus, Sonnet, Haiku, Fable"
+    expected_keywords:
+      - Haiku
+      - Sonnet
+      - model
+
+  - id: core_security
+    category: governance
+    query: "What are our security policies around secrets management?"
+    project: default
+    expected_behavior: "References governance policies, mentions Vaultwarden, env vars"
+    expected_keywords:
+      - secret
+      - policy
+      - variable

@@ -3,6 +3,22 @@ from config.settings import AGENT_URLS
 from orchestrator.contracts import check, consume_ticket
 from orchestrator.template_engine import parse_template_command, load_template, resolve_template, list_templates
 
+# Initialize distributed tracing
+try:
+    from integrations.tracing import init_tracing, traced, span, get_trace_id, add_span_attributes
+    init_tracing("orchestrator", version="2.0.0")
+except Exception:
+    def traced(name=None, attributes=None):
+        def decorator(func):
+            return func
+        return decorator
+
+    def get_trace_id():
+        return "no-trace"
+
+    def add_span_attributes(**kw):
+        pass
+
 
 def _resolve_ticket_references(task: str) -> str:
     """If the task references another ticket (e.g. 'Ticket #58'), fetch that ticket's
@@ -41,6 +57,7 @@ def _resolve_ticket_references(task: str) -> str:
     return "\n\n".join(context_parts) + f"\n\n--- Current Instruction ---\n{task}"
 
 
+@traced("orchestrator.route", attributes={"component": "router"})
 def route(task: str, project: str = "default", callback_id: str = None) -> dict:
     # Resolve ticket references so agents get full context
     enriched_task = _resolve_ticket_references(task)
