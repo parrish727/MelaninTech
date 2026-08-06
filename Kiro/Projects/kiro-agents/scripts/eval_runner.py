@@ -8,12 +8,21 @@ Runs golden test cases against the agent pipeline and scores results using:
 
 Pre-deploy gate: exits 1 if overall score < 85%.
 
+Structure:
+  eval/golden_sets/
+    core/           — routing, operations, governance
+    orthoflow/      — OrthoFlow LOB-specific
+    parcelpro/      — ParcelPro LOB-specific
+    artistos/       — ArtistOS LOB-specific
+    htc/            — HTC LOB-specific
+    melanin-core/   — Melanin Tech internal
+
 Usage:
-    # Run all golden sets
+    # Run all golden sets (all LOBs)
     python scripts/eval_runner.py
 
-    # Run a specific category
-    python scripts/eval_runner.py --category routing
+    # Run a specific LOB only
+    python scripts/eval_runner.py --lob orthoflow
 
     # Run without LLM judge (keyword-only, faster)
     python scripts/eval_runner.py --fast
@@ -62,39 +71,63 @@ Score from 0.0 to 1.0. Output ONLY a JSON object:
 {{"score": 0.XX, "reasoning": "brief explanation"}}"""
 
 
-def load_golden_sets(category: str = None) -> list[dict]:
-    """Load test cases from YAML/JSON files."""
-    cases = []
-
+def load_golden_sets(lob: str = None) -> dict[str, list[dict]]:
+    """
+    Load test cases organized by LOB folder.
+    Returns: {"core": [...cases], "orthoflow": [...cases], ...}
+    """
     try:
         import yaml
         loader = yaml.safe_load
     except ImportError:
         loader = None
 
-    for f in sorted(GOLDEN_SETS_DIR.glob("*.yaml")) + sorted(GOLDEN_SETS_DIR.glob("*.yml")):
-        if loader is None:
-            logger.warning(f"PyYAML not installed, skipping {f.name}")
+    lob_cases = {}
+
+    # Get LOB folders
+    if lob:
+        folders = [GOLDEN_SETS_DIR / lob]
+    else:
+        folders = sorted([d for d in GOLDEN_SETS_DIR.iterdir() if d.is_dir()])
+
+    for folder in folders:
+        if not folder.exists():
+            logger.warning(f"LOB folder not found: {folder}")
             continue
-        with open(f) as fp:
-            data = loader(fp)
-            if isinstance(data, dict) and "cases" in data:
-                cases.extend(data["cases"])
-            elif isinstance(data, list):
-                cases.extend(data)
 
-    for f in GOLDEN_SETS_DIR.glob("*.json"):
-        with open(f) as fp:
-            data = json.load(fp)
-            if isinstance(data, dict) and "cases" in data:
-                cases.extend(data["cases"])
-            elif isinstance(data, list):
-                cases.extend(data)
+        lob_name = folder.name
+        cases = []
 
-    if category:
-        cases = [c for c in cases if c.get("category") == category]
+        # Load YAML files
+        for f in sorted(folder.glob("*.yaml")) + sorted(folder.glob("*.yml")):
+            if loader is None:
+                logger.warning(f"PyYAML not installed, skipping {f.name}")
+                continue
+            with open(f) as fp:
+                data = loader(fp)
+                if isinstance(data, dict):
+                    file_project = data.get("project", lob_name)
+                    file_lob = data.get("lob", lob_name)
+                    for case in data.get("cases", []):
+                        case.setdefault("project", file_project)
+                        case.setdefault("lob", file_lob)
+                        cases.append(case)
+                elif isinstance(data, list):
+                    cases.extend(data)
 
-    return cases
+        # Load JSON files
+        for f in folder.glob("*.json"):
+            with open(f) as fp:
+                data = json.load(fp)
+                if isinstance(data, dict) and "cases" in data:
+                    cases.extend(data["cases"])
+                elif isinstance(data, list):
+                    cases.extend(data)
+
+        if cases:
+            lob_cases[lob_name] = cases
+
+    return lob_cases
 
 
 def run_agent_query(query: str, project: str = "default") -> str:
@@ -146,129 +179,148 @@ def score_llm_judge(query: str, response: str, expected_behavior: str, expected_
         )
 
         text = result.choices[0].message.content.strip()
-        # Parse JSON from response
         data = json.loads(text)
         return {"score": float(data["score"]), "reasoning": data.get("reasoning", "")}
     except Exception as e:
         return {"score": None, "reasoning": f"judge error: {e}"}
 
 
-def run_evaluation(cases: list[dict], use_judge: bool = True, threshold: float = None) -> dict:
-    """Run all test cases and produce evaluation report."""
+def run_evaluation(lob_cases: dict[str, list[dict]], use_judge: bool = True, threshold: float = None) -> dict:
+    """Run all test cases organized by LOB and produce per-LOB scores."""
     threshold = threshold or EVAL_THRESHOLD
-    results = []
-    total_score = 0.0
     start_time = time.time()
 
+    total_cases = sum(len(cases) for cases in lob_cases.values())
     print(f"\n{'='*60}")
-    print(f"  QA Evaluation — {len(cases)} test cases")
+    print(f"  QA Evaluation — {total_cases} test cases across {len(lob_cases)} LOBs")
     print(f"  Threshold: {threshold:.0%} | Judge: {'LLM' if use_judge else 'keyword-only'}")
-    print(f"{'='*60}\n")
-
-    for i, case in enumerate(cases, 1):
-        case_id = case["id"]
-        query = case["query"]
-        project = case.get("project", "default")
-        expected_behavior = case.get("expected_behavior", "")
-        expected_keywords = case.get("expected_keywords", [])
-
-        print(f"  [{i}/{len(cases)}] {case_id}...", end=" ", flush=True)
-
-        # Run the query
-        response = run_agent_query(query, project)
-
-        if response.startswith("[ERROR"):
-            results.append({
-                "case_id": case_id,
-                "status": "error",
-                "score": 0.0,
-                "response_preview": response[:200],
-            })
-            print("❌ ERROR")
-            continue
-
-        # Score: keyword matching
-        kw_score = score_keyword(response, expected_keywords)
-
-        # Score: LLM judge (if enabled)
-        judge_result = {"score": None, "reasoning": "skipped"}
-        if use_judge:
-            judge_result = score_llm_judge(query, response, expected_behavior, expected_keywords)
-
-        # Combined score: keyword 40%, judge 60% (or keyword 100% if no judge)
-        if judge_result["score"] is not None:
-            combined_score = (kw_score * 0.4) + (judge_result["score"] * 0.6)
-        else:
-            combined_score = kw_score
-
-        total_score += combined_score
-        passed = combined_score >= 0.6  # Per-case pass threshold
-
-        results.append({
-            "case_id": case_id,
-            "category": case.get("category", ""),
-            "status": "pass" if passed else "fail",
-            "score": round(combined_score, 3),
-            "keyword_score": round(kw_score, 3),
-            "judge_score": judge_result["score"],
-            "judge_reasoning": judge_result.get("reasoning", ""),
-            "response_preview": response[:300],
-        })
-
-        status_icon = "✓" if passed else "✗"
-        print(f"{status_icon} score={combined_score:.2f} (kw={kw_score:.2f}, judge={judge_result['score'] or 'n/a'})")
-
-    elapsed = time.time() - start_time
-    overall_score = total_score / len(results) if results else 0.0
-    passed_count = sum(1 for r in results if r["status"] == "pass")
-    failed_count = sum(1 for r in results if r["status"] == "fail")
-    error_count = sum(1 for r in results if r["status"] == "error")
-
-    report = {
-        "status": "pass" if overall_score >= threshold else "fail",
-        "overall_score": round(overall_score, 3),
-        "threshold": threshold,
-        "total_cases": len(results),
-        "passed": passed_count,
-        "failed": failed_count,
-        "errors": error_count,
-        "elapsed_s": round(elapsed, 1),
-        "results": results,
-    }
-
-    # Print summary
-    print(f"\n{'='*60}")
-    print(f"  EVALUATION RESULT: {'✓ PASS' if report['status'] == 'pass' else '✗ FAIL'}")
-    print(f"  Score: {overall_score:.1%} (threshold: {threshold:.0%})")
-    print(f"  Cases: {passed_count} passed, {failed_count} failed, {error_count} errors")
-    print(f"  Time: {elapsed:.1f}s")
     print(f"{'='*60}")
 
-    if failed_count > 0:
-        print(f"\n  Failed cases:")
-        for r in results:
-            if r["status"] == "fail":
-                print(f"    ✗ {r['case_id']} (score={r['score']:.2f}): {r.get('judge_reasoning', '')[:80]}")
+    lob_reports = {}
+    overall_scores = []
+    case_index = 0
+
+    for lob_name, cases in sorted(lob_cases.items()):
+        print(f"\n  ┌── LOB: {lob_name} ({len(cases)} cases) ──")
+
+        lob_results = []
+        lob_total_score = 0.0
+
+        for case in cases:
+            case_index += 1
+            case_id = case["id"]
+            query = case["query"]
+            project = case.get("project", "default")
+            expected_behavior = case.get("expected_behavior", "")
+            expected_keywords = case.get("expected_keywords", [])
+
+            print(f"  │ [{case_index}/{total_cases}] {case_id}...", end=" ", flush=True)
+
+            # Run the query
+            response = run_agent_query(query, project)
+
+            if response.startswith("[ERROR"):
+                lob_results.append({
+                    "case_id": case_id, "status": "error", "score": 0.0,
+                    "response_preview": response[:200],
+                })
+                print("❌ ERROR")
+                continue
+
+            # Score
+            kw_score = score_keyword(response, expected_keywords)
+            judge_result = {"score": None, "reasoning": "skipped"}
+            if use_judge:
+                judge_result = score_llm_judge(query, response, expected_behavior, expected_keywords)
+
+            if judge_result["score"] is not None:
+                combined_score = (kw_score * 0.4) + (judge_result["score"] * 0.6)
+            else:
+                combined_score = kw_score
+
+            lob_total_score += combined_score
+            overall_scores.append(combined_score)
+            passed = combined_score >= 0.6
+
+            lob_results.append({
+                "case_id": case_id,
+                "status": "pass" if passed else "fail",
+                "score": round(combined_score, 3),
+                "keyword_score": round(kw_score, 3),
+                "judge_score": judge_result["score"],
+                "judge_reasoning": judge_result.get("reasoning", ""),
+                "response_preview": response[:300],
+            })
+
+            status_icon = "✓" if passed else "✗"
+            judge_display = f"{judge_result['score']:.2f}" if judge_result["score"] is not None else "n/a"
+            print(f"{status_icon} score={combined_score:.2f} (kw={kw_score:.2f}, judge={judge_display})")
+
+        # LOB summary
+        lob_avg = lob_total_score / len(cases) if cases else 0.0
+        lob_passed = sum(1 for r in lob_results if r["status"] == "pass")
+        lob_status = "pass" if lob_avg >= threshold else "fail"
+
+        print(f"  └── {lob_name}: {'✓ PASS' if lob_status == 'pass' else '✗ FAIL'} — {lob_avg:.1%} ({lob_passed}/{len(cases)} cases)")
+
+        lob_reports[lob_name] = {
+            "status": lob_status,
+            "score": round(lob_avg, 3),
+            "passed": lob_passed,
+            "failed": len(cases) - lob_passed,
+            "total": len(cases),
+            "results": lob_results,
+        }
+
+    # Overall
+    elapsed = time.time() - start_time
+    overall_score = sum(overall_scores) / len(overall_scores) if overall_scores else 0.0
+    overall_status = "pass" if overall_score >= threshold else "fail"
+    total_passed = sum(r["passed"] for r in lob_reports.values())
+    total_failed = sum(r["failed"] for r in lob_reports.values())
+
+    report = {
+        "status": overall_status,
+        "overall_score": round(overall_score, 3),
+        "threshold": threshold,
+        "total_cases": total_cases,
+        "total_passed": total_passed,
+        "total_failed": total_failed,
+        "elapsed_s": round(elapsed, 1),
+        "lobs": lob_reports,
+    }
+
+    # Print final summary
+    print(f"\n{'='*60}")
+    print(f"  OVERALL: {'✓ PASS' if overall_status == 'pass' else '✗ FAIL'} — {overall_score:.1%}")
+    print(f"  Threshold: {threshold:.0%} | Time: {elapsed:.1f}s")
+    print(f"  Cases: {total_passed} passed, {total_failed} failed")
+    print(f"{'─'*60}")
+    print(f"  Per-LOB Scores:")
+    for name, lr in sorted(lob_reports.items()):
+        icon = "✓" if lr["status"] == "pass" else "✗"
+        print(f"    {icon} {name:20s} {lr['score']:.1%}  ({lr['passed']}/{lr['total']})")
+    print(f"{'='*60}")
 
     return report
 
 
 def main():
     parser = argparse.ArgumentParser(description="QA Eval Runner — golden-set evaluation gate")
-    parser.add_argument("--category", type=str, default=None, help="Run only a specific category")
+    parser.add_argument("--lob", type=str, default=None, help="Run only a specific LOB folder")
     parser.add_argument("--fast", action="store_true", help="Keyword-only scoring (no LLM judge)")
     parser.add_argument("--threshold", type=float, default=None, help="Pass threshold (default: 0.85)")
     parser.add_argument("--output", type=str, default=None, help="Save report to JSON file")
     args = parser.parse_args()
 
-    cases = load_golden_sets(category=args.category)
+    lob_cases = load_golden_sets(lob=args.lob)
 
-    if not cases:
-        logger.error("No golden test cases found in eval/golden_sets/")
+    if not lob_cases:
+        logger.error(f"No golden test cases found in eval/golden_sets/")
         sys.exit(1)
 
     report = run_evaluation(
-        cases,
+        lob_cases,
         use_judge=not args.fast,
         threshold=args.threshold,
     )
@@ -278,7 +330,6 @@ def main():
             json.dump(report, f, indent=2)
         logger.info(f"Report saved to {args.output}")
 
-    # Exit code for CI gating
     sys.exit(0 if report["status"] == "pass" else 1)
 
 

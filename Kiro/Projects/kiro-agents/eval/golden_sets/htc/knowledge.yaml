@@ -1,0 +1,28 @@
+# Held Together Caregiving — Golden Test Cases
+lob: htc
+project: htc
+
+cases:
+  - id: htc_purpose
+    query: "What is Held Together Caregiving?"
+    expected_behavior: "Caregiver coordination platform for adult children managing aging parents"
+    expected_keywords:
+      - caregiver
+      - caregiving
+      - care
+
+  - id: htc_pricing
+    query: "What are the pricing tiers for Held Together Caregiving?"
+    expected_behavior: "Freemium: Free, Family $9.99, Family+ $19.99, Professional $49.99"
+    expected_keywords:
+      - free
+      - family
+      - professional
+
+  - id: htc_target
+    query: "Who is the target market for HTC?"
+    expected_behavior: "40M+ adult caregivers, ages 35-55, managing aging parents"
+    expected_keywords:
+      - caregiver
+      - parent
+      - adult

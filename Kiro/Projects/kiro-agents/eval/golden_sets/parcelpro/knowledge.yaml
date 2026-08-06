@@ -1,0 +1,28 @@
+# ParcelPro — Golden Test Cases
+lob: parcelpro
+project: parcelpro
+
+cases:
+  - id: parcelpro_purpose
+    query: "What is ParcelPro and what market does it serve?"
+    expected_behavior: "Describes national land parcel marketplace, Zillow for land, working families"
+    expected_keywords:
+      - land
+      - parcel
+      - marketplace
+
+  - id: parcelpro_features
+    query: "What are the key features of the ParcelPro platform?"
+    expected_behavior: "Mentions GIS data layers, real-time bidding, saved searches, national scale"
+    expected_keywords:
+      - GIS
+      - bidding
+      - search
+
+  - id: parcelpro_target
+    query: "Who is the target user for ParcelPro?"
+    expected_behavior: "First-time land investors, blue-collar families, small-scale investors"
+    expected_keywords:
+      - investor
+      - land
+      - family
