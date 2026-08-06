@@ -777,10 +777,11 @@ services:
     command: ["-config.file=/etc/tempo.yaml"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/3200'"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3200/ready || exit 1"]
       interval: 15s
-      timeout: 3s
+      timeout: 5s
       retries: 5
+      start_period: 10s
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.108.0
@@ -793,10 +794,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/13133'"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
+      disable: true
 
 volumes:
   pgdata:
