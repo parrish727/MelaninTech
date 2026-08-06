@@ -1,0 +1,39 @@
+# Grafana Tempo — Trace storage for Melanin Technologies
+# Receives traces from OTEL Collector, stores locally.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+compactor:
+  compaction:
+    block_retention: 72h  # Keep traces for 3 days
+
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: melanin-tech
+  storage:
+    path: /var/tempo/generator/wal
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

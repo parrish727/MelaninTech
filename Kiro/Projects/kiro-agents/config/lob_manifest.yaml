@@ -1,0 +1,93 @@
+# LOB Onboarding Manifest — Melanin Technologies
+# Defines all Lines of Business and their document sources for extraction.
+#
+# Schema per LOB:
+#   name: Human-readable LOB name
+#   project_id: Unique identifier used in Qdrant metadata and agent routing
+#   status: active | onboarding | archived
+#   type: saas | consulting | internal | marketplace
+#   description: Brief description for Darius context
+#   doc_paths: List of filesystem paths containing LOB documents
+#   contacts: Primary stakeholder(s)
+#   onboarded_at: Date the LOB was first registered
+#
+# Adding a new LOB:
+#   1. Add entry below with status: onboarding
+#   2. Ensure doc_paths point to the LOB's documentation directory
+#   3. Run: python -m integrations.doc_extractor --lob <name>
+#   4. Verify in Qdrant: search business_context with LOB-specific query
+#   5. Update status to: active
+#
+# Governance:
+#   - Finance/ directories are NEVER extracted (see global steering)
+#   - Client photos/media files are skipped
+#   - Only text-based docs (.md, .html, .pdf, .docx, .txt) are processed
+
+lines_of_business:
+  - name: OrthoFlow
+    project_id: orthoflow
+    status: active
+    type: saas
+    description: "AI-powered orthodontic practice management platform. Patient intake, treatment planning, imaging analysis, and practice optimization."
+    doc_paths:
+      - /app/LinesOfBusiness/Orthodontic_Dental
+    contacts:
+      - pktech_dev
+    onboarded_at: "2026-04-01"
+
+  - name: ParcelPro
+    project_id: parcelpro
+    status: active
+    type: saas
+    description: "Logistics and delivery management platform. Route optimization, real-time tracking, and automated dispatch for last-mile delivery."
+    doc_paths:
+      - /app/LinesOfBusiness/Parcel_Pro/docs
+      - /app/LinesOfBusiness/Parcel_Pro/architecture
+    contacts:
+      - pktech_dev
+    onboarded_at: "2026-07-23"
+
+  - name: ArtistOS
+    project_id: artistos
+    status: active
+    type: marketplace
+    description: "Creative platform for independent artists and musicians. Portfolio hosting, booking management, streaming analytics, and fan engagement."
+    doc_paths:
+      - /app/LinesOfBusiness/ArtistOS
+    contacts:
+      - pktech_dev
+    onboarded_at: "2026-07-20"
+
+  - name: Held Together Caregiving
+    project_id: htc
+    status: active
+    type: saas
+    description: "Caregiving coordination platform. Connects caregivers, tracks patient activities, medication reminders, and family communication."
+    doc_paths:
+      - /app/LinesOfBusiness/Held_Together_Caregiving
+    contacts:
+      - pktech_dev
+    onboarded_at: "2026-05-01"
+
+  - name: MelaninTech Core
+    project_id: melanin-core
+    status: active
+    type: internal
+    description: "Melanin Technologies Inc. internal operations — company manifesto, client onboarding SOPs, architecture docs, integration frameworks, and multi-agent system documentation."
+    doc_paths:
+      - /app/MelaninDocs
+    contacts:
+      - pktech_dev
+    onboarded_at: "2026-04-01"
+
+# Template for new LOB onboarding:
+# - name: New Client Name
+#   project_id: new-client
+#   status: onboarding
+#   type: saas | consulting | internal | marketplace
+#   description: "Brief description of what the LOB does and who it serves."
+#   doc_paths:
+#     - /app/LinesOfBusiness/New_Client
+#   contacts:
+#     - pktech_dev
+#   onboarded_at: "YYYY-MM-DD"
