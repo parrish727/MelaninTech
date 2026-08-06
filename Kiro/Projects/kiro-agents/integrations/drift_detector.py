@@ -106,6 +106,8 @@ class DriftDetector:
                     "output": output[:2000],
                     "captured_at": datetime.utcnow().isoformat(),
                     "category": case.get("category", "general"),
+                    "lob": case.get("lob", "unknown"),
+                    "project": case.get("project", "default"),
                 },
             )
             captured += 1
@@ -171,6 +173,7 @@ class DriftDetector:
                 "similarity": round(similarity, 4),
                 "drift": round(drift, 4),
                 "threshold": self.threshold,
+                "lob": case.get("lob", "unknown"),
             })
 
         elapsed = time.time() - start_time
@@ -250,7 +253,7 @@ class DriftDetector:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _load_golden_sets(self) -> list[dict]:
-        """Load all golden test cases from YAML files."""
+        """Load all golden test cases from per-LOB folder structure."""
         cases = []
         if not GOLDEN_SETS_DIR.exists():
             return cases
@@ -258,32 +261,41 @@ class DriftDetector:
         try:
             import yaml
         except ImportError:
-            # Fall back to JSON files
-            for f in GOLDEN_SETS_DIR.glob("*.json"):
+            yaml = None
+
+        # Walk per-LOB subdirectories
+        for lob_dir in sorted(GOLDEN_SETS_DIR.iterdir()):
+            if not lob_dir.is_dir():
+                continue
+
+            lob_name = lob_dir.name
+
+            # Load YAML files from this LOB folder
+            if yaml:
+                for f in sorted(lob_dir.glob("*.yaml")) + sorted(lob_dir.glob("*.yml")):
+                    with open(f) as fp:
+                        data = yaml.safe_load(fp)
+                        if isinstance(data, dict):
+                            file_project = data.get("project", lob_name)
+                            file_lob = data.get("lob", lob_name)
+                            for case in data.get("cases", []):
+                                case.setdefault("project", file_project)
+                                case.setdefault("lob", file_lob)
+                                cases.append(case)
+                        elif isinstance(data, list):
+                            for case in data:
+                                case.setdefault("lob", lob_name)
+                            cases.extend(data)
+
+            # Load JSON files
+            for f in lob_dir.glob("*.json"):
                 with open(f) as fp:
                     data = json.load(fp)
-                    if isinstance(data, list):
-                        cases.extend(data)
-                    elif isinstance(data, dict) and "cases" in data:
-                        cases.extend(data["cases"])
-            return cases
-
-        for f in sorted(GOLDEN_SETS_DIR.glob("*.yaml")) + sorted(GOLDEN_SETS_DIR.glob("*.yml")):
-            with open(f) as fp:
-                data = yaml.safe_load(fp)
-                if isinstance(data, list):
-                    cases.extend(data)
-                elif isinstance(data, dict) and "cases" in data:
-                    cases.extend(data["cases"])
-
-        # Also load JSON files
-        for f in GOLDEN_SETS_DIR.glob("*.json"):
-            with open(f) as fp:
-                data = json.load(fp)
-                if isinstance(data, list):
-                    cases.extend(data)
-                elif isinstance(data, dict) and "cases" in data:
-                    cases.extend(data["cases"])
+                    file_cases = data.get("cases", data) if isinstance(data, dict) else data
+                    if isinstance(file_cases, list):
+                        for case in file_cases:
+                            case.setdefault("lob", lob_name)
+                        cases.extend(file_cases)
 
         return cases
 

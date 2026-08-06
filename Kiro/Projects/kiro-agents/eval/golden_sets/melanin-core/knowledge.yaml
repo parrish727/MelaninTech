@@ -1,0 +1,28 @@
+# Melanin Technologies Core — Golden Test Cases
+lob: melanin-core
+project: default
+
+cases:
+  - id: melanin_mission
+    query: "What is the mission of Melanin Technologies?"
+    expected_behavior: "End-to-end software solutions, empower businesses, scale faster"
+    expected_keywords:
+      - technology
+      - software
+      - business
+
+  - id: melanin_onboarding
+    query: "How do we onboard a new client at Melanin Technologies?"
+    expected_behavior: "References SOP, manifest, doc extraction, golden sets, status change"
+    expected_keywords:
+      - onboard
+      - client
+      - manifest
+
+  - id: melanin_architecture
+    query: "What is our infrastructure architecture?"
+    expected_behavior: "Self-hosted Docker, iMac Pro, agent-net, PostgreSQL, Qdrant, Redis"
+    expected_keywords:
+      - Docker
+      - self-hosted
+      - Qdrant

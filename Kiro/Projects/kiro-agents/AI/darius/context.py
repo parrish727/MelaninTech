@@ -125,6 +125,62 @@ def _recall_cross_session_qdrant(task: str, limit: int = 2) -> list[dict]:
     ]
 
 
+def _recall_business_context(query: str, project: str = "default", limit: int = 3) -> list[dict]:
+    """
+    Retrieve relevant business/LOB documentation from Qdrant business_context.
+    Scoped by LOB when project matches a known LOB, otherwise searches globally.
+    """
+    sl = _get_qdrant()
+    if not sl:
+        return []
+
+    # Map common project/session IDs to LOB names
+    lob_map = {
+        "orthoflow": "OrthoFlow",
+        "parcelpro": "ParcelPro",
+        "artistos": "ArtistOS",
+        "htc": "Held Together Caregiving",
+        "melanin-core": "MelaninTech Core",
+        "default": None,  # Search all LOBs
+    }
+
+    lob_name = lob_map.get(project.lower().replace(" ", "").replace("-", ""))
+
+    try:
+        if lob_name:
+            # LOB-scoped search
+            results = sl.search_with_filter(
+                "business_context",
+                query=query,
+                must=[{"key": "lob", "match": {"value": lob_name}}],
+                limit=limit,
+            )
+            # If LOB-scoped returns too few results, supplement with global
+            if len(results) < 2:
+                global_results = sl.search("business_context", query=query, limit=limit)
+                # Add non-duplicate global results
+                seen_ids = {r["id"] for r in results}
+                for gr in global_results:
+                    if gr["id"] not in seen_ids and len(results) < limit:
+                        results.append(gr)
+        else:
+            # Global search across all LOBs
+            results = sl.search("business_context", query=query, limit=limit)
+
+        return [
+            {
+                "text": r["payload"].get("_text", "")[:500],
+                "source_file": r["payload"].get("source_file", ""),
+                "lob": r["payload"].get("lob", ""),
+            }
+            for r in results
+            if r.get("score", 0) > 0.4  # Only include reasonably relevant results
+        ]
+    except Exception as e:
+        logger.debug(f"Business context search failed: {e}")
+        return []
+
+
 # ── Compression ───────────────────────────────────────────────────────────────
 
 def maybe_compress(session_id: str):
@@ -194,6 +250,7 @@ def build_context(session_id: str, current_task: str) -> str:
       1. Relevant compressed summaries from this session (Qdrant primary)
       2. Last 3 raw turns for recency
       3. Relevant past tasks from cross-session memory (Qdrant primary)
+      4. Business context from LOB documents (Qdrant business_context, LOB-scoped)
 
     Uses Redis cache (2-min TTL) to avoid re-embedding and search queries
     on rapid successive calls within the same session.
@@ -275,6 +332,22 @@ def build_context(session_id: str, current_task: str) -> str:
     except Exception as e:
         # Cross-session memory might not be available
         logger.debug(f"Cross-session recall unavailable: {e}")
+
+    # 4. Business context (LOB documents) — LOB-scoped from Qdrant business_context
+    try:
+        business_docs = _recall_business_context(current_task, project=session_id, limit=3)
+        if business_docs:
+            biz_text = "\n".join(
+                f"- [{d['source_file']}]: {d['text'][:400]}"
+                for d in business_docs
+            )
+            header = "\n=== Business Context ===\n"
+            section = header + biz_text
+            if len(section) < char_budget:
+                parts.append(section)
+                char_budget -= len(section)
+    except Exception as e:
+        logger.debug(f"Business context retrieval unavailable: {e}")
 
     if not parts:
         return ""

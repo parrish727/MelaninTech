@@ -1,0 +1,27 @@
+# ArtistOS / Calistro Creative — Golden Test Cases
+lob: artistos
+project: artistos
+
+cases:
+  - id: artistos_purpose
+    query: "What is ArtistOS and who is it built for?"
+    expected_behavior: "Creative platform for independent artists, producers, beatmakers, labels"
+    expected_keywords:
+      - artist
+      - creative
+      - platform
+
+  - id: artistos_features
+    query: "What are the key features of the ArtistOS platform?"
+    expected_behavior: "Track uploads, split sheets, contract analyzer, collaborator payouts"
+    expected_keywords:
+      - track
+      - split
+      - contract
+
+  - id: artistos_brand
+    query: "What is the brand name and domain for ArtistOS?"
+    expected_behavior: "Public brand is Calistro Creative, domain calistrocreative.com"
+    expected_keywords:
+      - Calistro
+      - creative

@@ -1,0 +1,29 @@
+# OrthoFlow — Golden Test Cases
+lob: orthoflow
+project: orthoflow
+
+cases:
+  - id: orthoflow_purpose
+    query: "What is OrthoFlow and what problem does it solve?"
+    expected_behavior: "Explains OrthoFlow as AI-powered orthodontic practice management platform"
+    expected_keywords:
+      - orthodontic
+      - practice
+      - patient
+      - AI
+
+  - id: orthoflow_services
+    query: "What services make up the OrthoFlow platform?"
+    expected_behavior: "Lists key services — frontend, backend, postgres, minio, nginx, etc."
+    expected_keywords:
+      - frontend
+      - backend
+      - database
+
+  - id: orthoflow_stack
+    query: "What tech stack does OrthoFlow use?"
+    expected_behavior: "Mentions React, FastAPI, PostgreSQL, MinIO, Docker"
+    expected_keywords:
+      - React
+      - FastAPI
+      - PostgreSQL
