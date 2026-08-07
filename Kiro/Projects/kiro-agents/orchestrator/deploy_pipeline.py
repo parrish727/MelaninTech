@@ -62,6 +62,24 @@ def deploy_to_production(app):
 
 def deploy_pipeline(app, ticket_id: int):
     """Rebuild testing then staging, then post production approval."""
+    # Feature freeze gate — block deploys when error budget < 20%
+    try:
+        from integrations.error_budget import ErrorBudgetEngine
+        engine = ErrorBudgetEngine()
+        if engine.is_feature_frozen():
+            app.client.chat_postMessage(
+                channel=SLACK_CHANNEL_ID,
+                text=(
+                    f"🛑 *Deploy BLOCKED — Feature Freeze Active*\n"
+                    f"Ticket #{ticket_id} cannot deploy. Error budget below 20%.\n"
+                    f"_Focus on reliability work until budget recovers._\n"
+                    f"_Override: `redis-cli DEL sre:feature_freeze`_"
+                ),
+            )
+            return
+    except Exception:
+        pass  # If budget engine unavailable, don't block deploys
+
     client = docker_sdk.from_env()
     for env in ENVS:
         app.client.chat_postMessage(channel=SLACK_CHANNEL_ID, text=f"🔨 Deploying to *{env['name']}*...")

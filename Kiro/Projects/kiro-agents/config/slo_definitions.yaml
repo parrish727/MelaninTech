@@ -1,0 +1,91 @@
+# SLO Definitions — Melanin Technologies
+# Defines Service Level Indicators (SLIs) and Objectives (SLOs) for the agent platform.
+#
+# Alerting uses multi-burn-rate windows (Google SRE standard):
+#   Fast Burn: 14.4x burn rate over 1h → critical page
+#   Slow Burn: 6x burn rate over 6h → warning ticket
+#
+# SLIs must reflect USER EXPERIENCE — not internal metrics (CPU, memory, disk).
+
+slos:
+  - name: agent_availability
+    description: "Percentage of agent requests that complete successfully"
+    sli:
+      type: availability
+      good_event: "LLM trace with status IN ('success', 'credit_guard')"
+      total_event: "All LLM traces (excluding HUD timeout errors)"
+      measurement_query: |
+        SELECT COUNT(*) FILTER (WHERE status IN ('success', 'credit_guard')) * 100.0 / NULLIF(COUNT(*), 0)
+        FROM llm_traces
+        WHERE created_at > NOW() - INTERVAL '{window}'
+          AND COALESCE(task_preview, '') NOT LIKE '%HUD timeout%'
+    target: 99.5  # percent
+    window_days: 30
+    error_budget_minutes: 216  # 30 days * 24h * 60min * 0.005 = 216 min of allowed downtime
+
+  - name: error_rate
+    description: "Percentage of requests resulting in errors (non-success, non-credit-guard)"
+    sli:
+      type: error_rate
+      good_event: "LLM trace with status NOT error"
+      total_event: "All LLM traces"
+      measurement_query: |
+        SELECT COUNT(*) FILTER (WHERE status NOT IN ('success', 'credit_guard')) * 100.0 / NULLIF(COUNT(*), 0)
+        FROM llm_traces
+        WHERE created_at > NOW() - INTERVAL '{window}'
+    target: 2.0  # percent (max allowed)
+    window_days: 30
+    error_budget_minutes: 864  # 2% of 30 days
+
+  - name: latency_p95
+    description: "95th percentile latency for interactive agent calls"
+    sli:
+      type: latency
+      good_event: "Request completing under target latency"
+      total_event: "Interactive requests (< 60s, non-cached)"
+      measurement_query: |
+        SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)
+        FROM llm_traces
+        WHERE created_at > NOW() - INTERVAL '{window}'
+          AND status = 'success' AND cached = FALSE AND latency_ms < 60000
+    target: 40000  # milliseconds (40 seconds)
+    window_days: 30
+
+# Burn Rate Alert Configuration
+alerts:
+  fast_burn:
+    description: "Budget exhausting in ~2 days"
+    burn_rate_threshold: 14.4
+    short_window: 1h
+    long_window: 5m  # Confirmation window
+    severity: critical
+    action: "Page on-call (Slack critical alert)"
+    notification_cooldown: 30m
+
+  slow_burn:
+    description: "Budget exhausting in ~5 days"
+    burn_rate_threshold: 6.0
+    short_window: 6h
+    long_window: 1h  # Confirmation window
+    severity: warning
+    action: "Create high-priority ticket + Slack warning"
+    notification_cooldown: 2h
+
+# Feature Freeze Policy
+feature_freeze:
+  trigger: "Error budget remaining < 20% for any SLO"
+  effect: "All non-critical deploys blocked via Redis flag (sre:feature_freeze)"
+  recovery: "Automatically lifts when all budgets recover above 20%"
+  override: "CEO can manually unfreeze via: redis-cli DEL sre:feature_freeze"
+  communication: "Slack notification on activation and deactivation"
+
+# Dashboard Requirements
+dashboard:
+  must_display:
+    - "Budget remaining (% and hours to exhaustion)"
+    - "Current burn rate per SLO"
+    - "SLO compliance over rolling 30-day window"
+    - "Feature freeze status (active/inactive)"
+    - "Alert history (last 7 days)"
+  refresh_interval: 5m
+  stakeholder_access: "CEO via HUD SRE tab"
