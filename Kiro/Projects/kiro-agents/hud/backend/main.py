@@ -1,6 +1,7 @@
 """Melanin Tech HUD — Internal monitoring dashboard backend."""
 import os
 import threading
+import hashlib
 import docker
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -8,6 +9,52 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+
+# ── HUD Darius Response Cache (Redis) ────────────────────────────────────────
+_REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+_HUD_CACHE_TTL = 300  # 5 minutes — short enough to stay fresh, long enough to help
+_hud_redis = None
+
+
+def _get_hud_redis():
+    global _hud_redis
+    if _hud_redis is None:
+        try:
+            import redis
+            _hud_redis = redis.Redis.from_url(_REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+            _hud_redis.ping()
+        except Exception:
+            _hud_redis = None
+    return _hud_redis
+
+
+def _hud_cache_key(endpoint: str, message: str) -> str:
+    """Generate cache key from endpoint + normalized message."""
+    normalized = message.strip().lower()
+    content = f"hud:{endpoint}:{normalized}"
+    return f"hud_darius:{hashlib.sha256(content.encode()).hexdigest()[:16]}"
+
+
+def _hud_cache_get(endpoint: str, message: str) -> str | None:
+    """Check cache for a previous Darius response."""
+    r = _get_hud_redis()
+    if not r:
+        return None
+    try:
+        return r.get(_hud_cache_key(endpoint, message))
+    except Exception:
+        return None
+
+
+def _hud_cache_set(endpoint: str, message: str, response: str):
+    """Cache a Darius response."""
+    r = _get_hud_redis()
+    if not r:
+        return
+    try:
+        r.setex(_hud_cache_key(endpoint, message), _HUD_CACHE_TTL, response)
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -338,6 +385,40 @@ def tickets():
     return {"tickets": rows, "summary": summary}
 
 
+# ── Workflows ─────────────────────────────────────────────────────────────────
+@app.get("/api/workflows", dependencies=[Depends(verify_token)])
+def workflows():
+    """List all workflows (file-tree + legacy) with recent run data."""
+    import sys
+    sys.path.insert(0, "/app")
+    try:
+        from orchestrator.workflow_engine import list_workflows
+        wf_list = list_workflows()
+    except Exception:
+        wf_list = []
+
+    # Get recent workflow traces
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT task_id, phase, status, evaluation_score, latency_ms, created_at
+            FROM darius_traces
+            WHERE phase IN ('plan', 'complete', 'reject')
+            ORDER BY created_at DESC LIMIT 20
+        """)
+        recent_runs = cur.fetchall()
+    except Exception:
+        recent_runs = []
+    conn.close()
+
+    return {
+        "workflows": wf_list,
+        "recent_runs": recent_runs,
+        "total_workflows": len(wf_list),
+    }
+
+
 # ── Memory ────────────────────────────────────────────────────────────────────
 @app.get("/api/memory", dependencies=[Depends(verify_token)])
 def memory():
@@ -375,18 +456,53 @@ def projects():
     project_list = []
     try:
         client = docker.from_env()
+        all_containers = {c.name: c for c in client.containers.list(all=True)}
+
         # Melanin Tech Website
-        try:
-            c = client.containers.get("docker-production-server-1")
-            project_list.append({"name": "melanin-tech.com", "status": c.status, "url": "https://www.melanin-tech.com", "started": c.attrs["State"]["StartedAt"]})
-        except Exception:
-            project_list.append({"name": "melanin-tech.com", "status": "unknown", "url": "https://www.melanin-tech.com", "started": None})
-        # OrthoFlow
-        try:
-            c = client.containers.get("orthoflow-frontend-1")
-            project_list.append({"name": "OrthoFlow AI", "status": c.status, "url": "https://app.orthoflowsolutions.com", "started": c.attrs["State"]["StartedAt"]})
-        except Exception:
-            project_list.append({"name": "OrthoFlow AI", "status": "unknown", "url": "https://app.orthoflowsolutions.com", "started": None})
+        c = all_containers.get("docker-production-server-1")
+        project_list.append({
+            "name": "melanin-tech.com",
+            "status": c.status if c else "unknown",
+            "url": "https://www.melanin-tech.com",
+            "started": c.attrs["State"]["StartedAt"] if c else None,
+            "services": [],
+        })
+
+        # OrthoFlow — full project with sub-services
+        orthoflow_services = [
+            {"name": "App (Production)", "url": "https://app.orthoflowsolutions.com", "container": "orthoflow-frontend-1"},
+            {"name": "Try (Demo)", "url": "https://try.orthoflowsolutions.com", "container": "orthoflow-brochure-orthoflow-brochure-frontend-1"},
+            {"name": "Marketing Site", "url": "https://orthoflowsolutions.com", "container": "docker-orthoflow-marketing-1"},
+            {"name": "Backend API", "url": "https://api.orthoflowsolutions.com", "container": "orthoflow-backend-1"},
+            {"name": "Worker", "url": None, "container": "orthoflow-worker-1"},
+            {"name": "Brochure API", "url": None, "container": "orthoflow-brochure-orthoflow-brochure-api-1"},
+            {"name": "Database", "url": None, "container": "orthoflow-postgres-1"},
+            {"name": "Redis", "url": None, "container": "orthoflow-redis-1"},
+            {"name": "MinIO (Storage)", "url": None, "container": "orthoflow-minio-1"},
+            {"name": "Ollama (AI)", "url": None, "container": "orthoflow-ollama-1"},
+            {"name": "Watchtower", "url": None, "container": "orthoflow-watchtower-1"},
+        ]
+
+        services = []
+        for svc in orthoflow_services:
+            c = all_containers.get(svc["container"])
+            services.append({
+                "name": svc["name"],
+                "url": svc["url"],
+                "status": c.status if c else "not found",
+                "container": svc["container"],
+            })
+
+        # Main OrthoFlow entry
+        frontend = all_containers.get("orthoflow-frontend-1")
+        project_list.append({
+            "name": "OrthoFlow AI",
+            "status": frontend.status if frontend else "unknown",
+            "url": "https://app.orthoflowsolutions.com",
+            "started": frontend.attrs["State"]["StartedAt"] if frontend else None,
+            "services": services,
+        })
+
     except Exception:
         pass
     return {"projects": project_list}
@@ -506,10 +622,11 @@ def _check_containers():
                         target = float(target)  # DB returns Decimal, need float for math
                         period_start = f"NOW() - INTERVAL '{window_hours} hours'"
                         if slo_name == 'agent_availability':
+                            # credit_guard counts as SUCCESS (prevented failure, not system failure)
                             # Exclude HUD timeout errors — those are network timeouts, not LLM failures
                             cur.execute(f"""
                                 SELECT COUNT(*) as total,
-                                       COUNT(*) FILTER (WHERE status='success') as success
+                                       COUNT(*) FILTER (WHERE status IN ('success', 'credit_guard')) as success
                                 FROM llm_traces
                                 WHERE created_at > {period_start}
                                   AND COALESCE(task_preview, '') NOT LIKE '%%HUD timeout%%'
@@ -521,10 +638,10 @@ def _check_containers():
                             budget_total = 100 - target  # e.g., 0.5% error budget
                             consumed = max(0, (100 - current))
                         elif slo_name == 'error_rate':
-                            # Exclude HUD timeout errors from error counting
+                            # credit_guard and HUD timeouts are NOT errors
                             cur.execute(f"""
                                 SELECT COUNT(*) as total,
-                                       COUNT(*) FILTER (WHERE status != 'success'
+                                       COUNT(*) FILTER (WHERE status NOT IN ('success', 'credit_guard')
                                            AND COALESCE(task_preview, '') NOT LIKE '%%HUD timeout%%') as errors
                                 FROM llm_traces
                                 WHERE created_at > {period_start}
@@ -536,12 +653,16 @@ def _check_containers():
                             budget_total = target  # 2% allowed
                             consumed = current
                         elif slo_name == 'latency_p95':
+                            # Segment: only measure interactive-tier calls (< 1min)
+                            # Background orchestrator tasks (multi-step, 60-180s) are excluded
+                            # This prevents heavy agent workflows from breaching the interactive SLO
                             cur.execute(f"""
                                 SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms) as p95
                                 FROM llm_traces
                                 WHERE created_at > {period_start}
                                   AND status = 'success'
                                   AND cached = FALSE
+                                  AND latency_ms < 60000
                             """)
                             row = cur.fetchone()
                             p95 = row[0] if row and row[0] else 0
@@ -581,10 +702,18 @@ def _check_containers():
                             VALUES (%s, NOW() - INTERVAL '%s hours', NOW(), %s, %s, %s, %s)
                         """, (slo_name, window_hours, budget_total, consumed, remaining, status_val))
 
-                        # Alert on budget exhaustion
-                        if status_val == 'exhausted' and slo_name not in _alerted:
-                            _alerted.add(f"budget_{slo_name}")
-                            _send_alert(f"🔴 *Error Budget Exhausted:* `{slo_name}` — consumed {consumed:.1f} / {budget_total:.1f}")
+                        # Alert on budget — NOW uses multi-burn-rate engine (not threshold)
+                        # The old exhaustion-only alert is replaced by integrations/error_budget.py
+                        # which fires only on sustained burn rates (fast: 14.4x/1h, slow: 6x/6h)
+
+                    # Run multi-burn-rate check cycle
+                    try:
+                        from integrations.error_budget import ErrorBudgetEngine
+                        _budget_engine = ErrorBudgetEngine()
+                        _budget_engine._ensure_tables()
+                        _budget_engine.run_check_cycle()
+                    except Exception as _budget_err:
+                        print(f"[HUD-WATCHDOG] Burn-rate check error: {_budget_err}", flush=True)
 
                     conn.commit()
                     conn.commit()
@@ -1107,9 +1236,17 @@ def _build_unified_graph() -> dict:
             # Add code nodes (limit to reduce size — skip trivial nodes)
             for node in graphify_data.get("nodes", []):
                 node["file_type"] = node.get("file_type", "code")
+                # graphify 0.9.x uses integer community IDs; normalize to string
+                if "community_name" not in node and "community" in node:
+                    node["community_name"] = f"Community {node['community']}"
                 all_nodes.append(node)
-            # Add code edges
+            # Add code edges (0.9.x uses 'links', older used 'edges')
             for edge in graphify_data.get("links", graphify_data.get("edges", [])):
+                # Normalize edge format: 0.9.x uses 'relation' instead of 'label'
+                if "label" not in edge and "relation" in edge:
+                    edge["label"] = edge["relation"]
+                if "type" not in edge:
+                    edge["type"] = edge.get("relation", "calls")
                 all_edges.append(edge)
         except Exception:
             pass
@@ -1410,6 +1547,11 @@ def contracts_darius(body: dict):
     import httpx as _hx
     prompt = body.get("message", "")
 
+    # Check cache first
+    cached = _hud_cache_get("contracts", prompt)
+    if cached:
+        return {"reply": cached, "cached": True}
+
     # Pre-flight: confirm Darius is alive (fast, 5s timeout)
     try:
         _hx.get("http://darius-agent:8000/health", timeout=5)
@@ -1427,14 +1569,16 @@ def contracts_darius(body: dict):
     context = f"{summary}. Contracts: {brief}"
     try:
         r = _hx.post(
-            "http://darius-agent:8000/task",
-            json={"task": f"[Contract Management] {context}\n\nUser: {prompt}", "project": "melanin-contracts", "session_id": "hud-contracts", "model_source": "local"},
+            "http://darius-agent:8000/task/auto",
+            json={"task": f"[Contract Management] {context}\n\nUser request: {prompt}", "project": "hud-contracts", "session_id": "hud-contracts"},
             timeout=300,
         )
         data = r.json()
-        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+        reply = data.get("args", {}).get("proposal", data.get("reply", "No response from Darius."))
+        _hud_cache_set("contracts", prompt, reply)
+        return {"reply": reply, "model": data.get("model")}
     except _hx.TimeoutException:
-        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
+        return {"reply": "Darius is still processing (took longer than 3 minutes). Try a simpler question."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
 
@@ -1488,6 +1632,11 @@ def governance_darius(body: dict):
     import httpx as _hx
     prompt = body.get("message", "")
 
+    # Check cache first
+    cached = _hud_cache_get("governance", prompt)
+    if cached:
+        return {"reply": cached, "cached": True}
+
     # Pre-flight: confirm Darius is alive (fast, 5s timeout)
     try:
         _hx.get("http://darius-agent:8000/health", timeout=5)
@@ -1498,13 +1647,15 @@ def governance_darius(body: dict):
     policies = [f.replace(".md", "") for f in os.listdir(gov_dir) if f.endswith(".md")]
     context = f"Governance policies: {', '.join(policies)}. Ask about any specific policy for details."
     try:
-        r = _hx.post("http://darius-agent:8000/task",
-            json={"task": f"[Governance & Compliance] {context}\n\nUser: {prompt}", "project": "melanin-governance", "session_id": "hud-governance", "model_source": "local"},
+        r = _hx.post("http://darius-agent:8000/task/auto",
+            json={"task": f"[Governance & Compliance] {context}\n\nUser request: {prompt}", "project": "hud-governance", "session_id": "hud-governance"},
             timeout=300)
         data = r.json()
-        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+        reply = data.get("args", {}).get("proposal", data.get("reply", "No response from Darius."))
+        _hud_cache_set("governance", prompt, reply)
+        return {"reply": reply, "model": data.get("model")}
     except _hx.TimeoutException:
-        return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
+        return {"reply": "Darius is still processing (took longer than 3 minutes). Try a simpler question."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
 
@@ -1616,10 +1767,15 @@ def sre_external():
 
 @app.post("/api/sre/darius", dependencies=[Depends(verify_token)])
 def sre_darius(body: dict):
-    """Proxy to Darius for SRE questions. Uses Haiku for fast responses (future: Mistral Small local)."""
+    """Proxy to Darius for SRE questions."""
     import httpx as _hx
     prompt = body.get("message", "")
     scope = body.get("scope", "all")
+
+    # Check cache first
+    cached = _hud_cache_get(f"sre-{scope}", prompt)
+    if cached:
+        return {"reply": cached, "cached": True}
 
     # Pre-flight: confirm Darius is alive (fast, 5s timeout)
     try:
@@ -1627,31 +1783,34 @@ def sre_darius(body: dict):
     except Exception:
         return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
 
-    task = (
-        f"[SRE — {scope}] You are monitoring Melanin Technologies infrastructure. "
-        f"Diagnose and troubleshoot the following. Be thorough but respond within one message.\n\n"
-        f"User: {prompt}"
-    )
-
     try:
-        r = _hx.post("http://darius-agent:8000/task",
-            json={
-                "task": task,
-                "project": "melanin-sre",
-                "session_id": "hud-sre",
-                # Force Haiku for HUD chat — fast responses (<15s).
-                # When Mistral Small is deployed locally (Ticket #69, 07/20/2026),
-                # change this to use the local endpoint for <5s responses.
-                "model_override": "light",
-            },
-            timeout=120)
+        # Gather LIVE infrastructure data to pass to Darius (HUD has Docker access, Darius doesn't)
+        live_data = ""
+        try:
+            client = docker.from_env()
+            all_containers = client.containers.list(all=True)
+            our = [c for c in all_containers if c.name.startswith("docker-") or c.name.startswith("orthoflow-")]
+            running = [c for c in our if c.status == "running"]
+            down = [c for c in our if c.status != "running"]
+
+            live_data = f"LIVE CONTAINER STATUS ({len(running)}/{len(our)} running):\n"
+            if down:
+                live_data += "DOWN:\n" + "\n".join(f"  - {c.name}: {c.status}" for c in down) + "\n"
+            live_data += "RUNNING:\n" + "\n".join(f"  - {c.name}" for c in running[:20]) + "\n"
+        except Exception:
+            live_data = "Unable to gather live container data."
+
+        r = _hx.post("http://darius-agent:8000/task/auto",
+            json={"task": f"[SRE — {scope}] LIVE INFRASTRUCTURE DATA:\n{live_data}\n\nUser request: {prompt}", "project": "hud-sre", "session_id": "hud-sre"},
+            timeout=300)
         data = r.json()
-        reply = data.get("args", {}).get("proposal", "No response from Darius.")
-        return {"reply": reply}
+        reply = data.get("args", {}).get("proposal", data.get("reply", "No response from Darius."))
+        _hud_cache_set(f"sre-{scope}", prompt, reply)
+        return {"reply": reply, "model": data.get("model")}
     except _hx.TimeoutException:
-        return {"reply": "Darius is still thinking (exceeded 2 minutes). For complex multi-step troubleshooting, use Slack: `@Kiro task melanin-sre: <your question>`"}
+        return {"reply": "Darius is still processing (took longer than 3 minutes). Try a simpler question."}
     except Exception as e:
-        return {"reply": f"Darius error: {str(e)[:200]}"}
+        return {"reply": f"Darius unavailable: {e}"}
 
 
 # ── Chart Data (Grafana-style time-series) ────────────────────────────────────
@@ -1955,6 +2114,11 @@ def llm_darius(body: dict):
     import httpx as _hx
     prompt = body.get("message", "")
 
+    # Check cache first
+    cached = _hud_cache_get("llm", prompt)
+    if cached:
+        return {"reply": cached, "cached": True}
+
     # Pre-flight: confirm Darius is alive (fast, 5s timeout)
     try:
         _hx.get("http://darius-agent:8000/health", timeout=5)
@@ -1991,15 +2155,141 @@ def llm_darius(body: dict):
     )
 
     try:
-        r = _hx.post("http://darius-agent:8000/task",
-            json={"task": f"[LLM Observability] {context}\n\nUser: {prompt}", "project": "melanin-llm", "session_id": "hud-llm", "model_source": "local"},
+        r = _hx.post("http://darius-agent:8000/task/auto",
+            json={"task": f"[LLM Observability] {context}\n\nUser request: {prompt}", "project": "hud-llm", "session_id": "hud-llm"},
             timeout=300)
         data = r.json()
-        return {"reply": data.get("args", {}).get("proposal", "No response from Darius.")}
+        reply = data.get("args", {}).get("proposal", data.get("reply", "No response from Darius."))
+        _hud_cache_set("llm", prompt, reply)
+        return {"reply": reply, "model": data.get("model")}
     except _hx.TimeoutException:
         return {"reply": "Darius is still processing your request (took longer than 5 minutes). Try a simpler question or check back shortly."}
     except Exception as e:
         return {"reply": f"Darius unavailable: {e}"}
+
+
+# ── Global Darius Command Center ──────────────────────────────────────────────
+
+@app.post("/api/darius/global", dependencies=[Depends(verify_token)])
+def darius_global(body: dict):
+    """
+    Global Darius endpoint — full v3 capabilities, context-aware based on active tab.
+    Uses /task/auto (smart engine routing) so Darius can reason, dispatch agents,
+    check infrastructure, and take action — not just generate text.
+
+    Body: {"message": "...", "tab": "dashboard|agents|sre-int|contracts|..."}
+    """
+    import httpx as _hx
+    prompt = body.get("message", "")
+    active_tab = body.get("tab", "dashboard")
+
+    # Check cache (only for repeated identical questions)
+    cache_key = f"{active_tab}:{prompt}"
+    cached = _hud_cache_get("global", cache_key)
+    if cached:
+        return {"reply": cached, "cached": True, "tab": active_tab}
+
+    # Pre-flight health check
+    try:
+        _hx.get("http://darius-agent:8000/health", timeout=5)
+    except Exception:
+        return {"reply": "Darius is not reachable. The agent container may be down or restarting."}
+
+    # Assemble context based on active tab
+    context = _build_tab_context(active_tab)
+
+    # Use /task/auto — full v3 engine with reasoning, agent dispatch, and action capability
+    task_prompt = f"[HUD — {active_tab}] Context:\n{context}\n\nUser request: {prompt}"
+
+    try:
+        r = _hx.post("http://darius-agent:8000/task/auto",
+            json={"task": task_prompt, "project": f"hud-{active_tab}", "session_id": f"hud-global-{active_tab}"},
+            timeout=300)
+        data = r.json()
+        reply = data.get("args", {}).get("proposal", data.get("reply", "No response from Darius."))
+        _hud_cache_set("global", cache_key, reply)
+        return {"reply": reply, "model": data.get("model"), "engine": data.get("engine"), "tab": active_tab}
+    except _hx.TimeoutException:
+        return {"reply": "Darius is still working (took longer than 5 minutes). Check Slack for updates or try a simpler question."}
+    except Exception as e:
+        return {"reply": f"Darius unavailable: {e}"}
+
+
+def _build_tab_context(tab: str) -> str:
+    """Build context string relevant to the active tab."""
+    conn = _db()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    context = ""
+
+    try:
+        if tab == "dashboard":
+            cur.execute("SELECT status, COUNT(*) as count FROM tickets GROUP BY status")
+            tickets = {r["status"]: r["count"] for r in cur.fetchall()}
+            cur.execute("SELECT COUNT(*) as count FROM task_memory")
+            memory = cur.fetchone()["count"]
+            context = f"Tickets: {tickets}. Memory entries: {memory}."
+
+        elif tab == "contracts":
+            cur.execute("SELECT id, client, role, net_rate, status, outstanding FROM contracts ORDER BY created_at DESC")
+            rows = cur.fetchall()
+            active = [c for c in rows if c["status"] == "active"]
+            brief = "; ".join(f"{c['client']} ${float(c['net_rate'])}/hr {c['status']}" for c in rows[:8])
+            context = f"Active contracts: {len(active)}. Total outstanding: ${sum(float(c['outstanding']) for c in rows):.0f}. Contracts: {brief}"
+
+        elif tab in ("sre-int", "sre-ext"):
+            scope = "internal" if tab == "sre-int" else "external"
+            context = f"SRE scope: {scope} infrastructure. You are monitoring Melanin Technologies {scope} systems."
+
+        elif tab == "governance":
+            gov_dir = "/app/governance" if os.path.isdir("/app/governance") else os.path.join(os.path.dirname(__file__), "../../governance")
+            policies = [f.replace(".md", "") for f in os.listdir(gov_dir) if f.endswith(".md")]
+            cur.execute("SELECT COUNT(*) FILTER (WHERE status='done') as done, COUNT(*) FILTER (WHERE status='open') as open FROM tickets WHERE task ILIKE '%governance%' OR task ILIKE '%compliance%'")
+            row = cur.fetchone()
+            context = f"Governance policies: {', '.join(policies)}. Gov tickets: {row['done']} done, {row['open']} open."
+
+        elif tab == "llm":
+            cur.execute("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='success') as success FROM llm_traces WHERE created_at > NOW() - INTERVAL '24 hours'")
+            stats = cur.fetchone()
+            cur.execute("SELECT DISTINCT ON (slo_name) slo_name, status FROM llm_error_budgets ORDER BY slo_name, created_at DESC")
+            budgets = {r["slo_name"]: r["status"] for r in cur.fetchall()}
+            context = f"LLM (24h): {stats['total']} calls, {stats['success']} success. Error budgets: {budgets}."
+
+        elif tab == "tickets":
+            cur.execute("SELECT status, COUNT(*) as count FROM tickets GROUP BY status")
+            summary = {r["status"]: r["count"] for r in cur.fetchall()}
+            cur.execute("SELECT id, status, agent, LEFT(task, 80) as task FROM tickets WHERE status IN ('open','in_progress','approved') ORDER BY id DESC LIMIT 5")
+            recent = cur.fetchall()
+            recent_str = "; ".join(f"#{r['id']} [{r['status']}] {r['task']}" for r in recent)
+            context = f"Ticket summary: {summary}. Recent open: {recent_str}"
+
+        elif tab == "agents":
+            context = "Agent system health. You can answer questions about agent status, capabilities, and task routing."
+
+        elif tab == "memory":
+            cur.execute("SELECT COUNT(*) as task_count FROM task_memory")
+            task_count = cur.fetchone()["task_count"]
+            cur.execute("SELECT COUNT(*) as conv_count FROM conversation_memory")
+            conv_count = cur.fetchone()["conv_count"]
+            context = f"Memory: {task_count} task memories, {conv_count} conversation memories."
+
+        elif tab == "graph":
+            context = "Knowledge graph powered by Graphify 0.9.14. Contains code nodes, doc nodes, agent nodes, service nodes, and concept nodes."
+
+        elif tab == "security":
+            context = "Security monitoring: fail2ban, TLS certs, container access control, vulnerability scanning."
+
+        elif tab == "clients":
+            context = "OrthoFlow client accounts and usage metrics."
+
+        else:
+            context = "General Melanin Technologies operations and infrastructure."
+
+    except Exception as e:
+        context = f"Context assembly error: {e}"
+    finally:
+        conn.close()
+
+    return context
 
 
 # ── Endpoint Health Monitoring ────────────────────────────────────────────────
