@@ -1,0 +1,6 @@
+{
+  "allowed_tools": ["read_file", "dispatch", "mcp"],
+  "agent": "darius",
+  "approve": true,
+  "depends_on": ["02-analyze"]
+}

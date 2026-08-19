@@ -1,0 +1,20 @@
+
+[tool.poetry]
+name = "melanin-tech-semantic"
+version = "0.1.0"
+description = "Semantic search layer: pgvector + Ollama nomic-embed-text"
+authors = ["Melanin Tech Team"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+ollama = "^0.1.8"
+psycopg2-binary = "^2.9.9"
+numpy = "^1.26.0"
+
+[tool.poetry.dev-dependencies]
+pytest = "^8.0.0"
+pytest-mock = "^3.14.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

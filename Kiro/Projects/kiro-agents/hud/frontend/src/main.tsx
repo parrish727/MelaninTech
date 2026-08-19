@@ -1,11 +1,79 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import ForceGraph2D from 'react-force-graph-2d'
 import './index.css'
 
 const API = ''  // Same origin — proxied through nginx to backend
 
+// ── Darius Chat Hook (timeout + elapsed time feedback) ───────────────────────
+const DARIUS_TIMEOUT_MS = 310_000 // 310s — slightly above backend's 300s
+
+function useDariusChat(endpoint: string, token: string, initialMessage: string) {
+  const [messages, setMessages] = React.useState<{role:string;content:string}[]>([{role:'assistant',content:initialMessage}])
+  const [input, setInput] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [elapsed, setElapsed] = React.useState(0)
+  const abortRef = React.useRef<AbortController | null>(null)
+  const timerRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const askDarius = React.useCallback(async (extraBody?: Record<string, unknown>) => {
+    if (!input.trim()) return
+    const msg = input
+    setMessages(p => [...p, {role:'user',content:msg}])
+    setInput(''); setLoading(true); setElapsed(0)
+
+    // Start elapsed timer
+    const start = Date.now()
+    timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+
+    // Abort controller with timeout
+    abortRef.current = new AbortController()
+    const timeoutId = setTimeout(() => abortRef.current?.abort(), DARIUS_TIMEOUT_MS)
+
+    try {
+      const r = await fetch(`${API}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, ...extraBody }),
+        signal: abortRef.current.signal,
+      })
+      const d = await r.json()
+      setMessages(p => [...p, {role:'assistant',content:d.reply}])
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        setMessages(p => [...p, {role:'assistant',content:'Request timed out (>5 min). Darius may still be processing — try a simpler question or check back shortly.'}])
+      } else {
+        setMessages(p => [...p, {role:'assistant',content:'Darius unavailable.'}])
+      }
+    } finally {
+      clearTimeout(timeoutId)
+      if (timerRef.current) clearInterval(timerRef.current)
+      setLoading(false); setElapsed(0)
+    }
+  }, [input, endpoint, token])
+
+  const cancel = React.useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
+  return { messages, input, setInput, loading, elapsed, askDarius, cancel }
+}
+
 // ── Grafana-style Panel ──────────────────────────────────────────────────────
+
+function DariusThinking({ elapsed, onCancel }: { elapsed: number; onCancel: () => void }) {
+  const phases = elapsed < 5 ? 'Connecting...' : elapsed < 15 ? 'Planning...' : elapsed < 60 ? 'Executing...' : 'Still working...'
+  return (
+    <div className="text-xs px-3 py-2 flex items-center gap-2">
+      <span className="text-violet-400 animate-pulse">✦</span>
+      <span className="text-gray-400">{phases}</span>
+      <span className="text-gray-600">{elapsed}s</span>
+      {elapsed > 30 && <button onClick={onCancel} className="text-gray-600 hover:text-red-400 ml-auto text-[10px]">cancel</button>}
+    </div>
+  )
+}
+
 function Panel({ title, subtitle, children, span = 1 }: { title: string; subtitle?: string; children: React.ReactNode; span?: number }) {
   return (
     <div className={`bg-gray-900 border border-gray-800 rounded-lg flex flex-col ${span === 2 ? 'col-span-2' : ''}`}>
@@ -56,7 +124,7 @@ function BarMini({ data, color, prefix = '' }: { data: { name: string; value: nu
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem('hud_token') || '')
-  const [tab, setTab] = useState<'dashboard' | 'agents' | 'infra' | 'darius' | 'projects' | 'tickets' | 'memory' | 'security' | 'clients' | 'contracts' | 'governance' | 'sre-int' | 'sre-ext' | 'graph'>('dashboard')
+  const [tab, setTab] = useState<'dashboard' | 'agents' | 'infra' | 'darius' | 'projects' | 'tickets' | 'memory' | 'security' | 'clients' | 'contracts' | 'governance' | 'sre-int' | 'sre-ext' | 'graph' | 'llm'>('dashboard')
   const [password, setPassword] = useState('')
   const [data, setData] = useState<any>(null)
   const [agents, setAgents] = useState<any[]>([])
@@ -116,7 +184,7 @@ function App() {
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-bold text-cyan-400">MELANIN TECH HUD</h1>
           <div className="flex gap-1">
-            {([['dashboard','Executive'],['agents','Agents'],['infra','Infrastructure'],['darius','Darius'],['projects','Projects'],['tickets','Tickets'],['memory','Memory'],['security','Security'],['clients','Clients'],['contracts','Contracts'],['governance','Governance'],['sre-int','SRE Internal'],['sre-ext','SRE External'],['graph','Graph']] as const).map(([t, label]) => (
+            {([['dashboard','Executive'],['agents','Agents'],['infra','Infrastructure'],['darius','Darius'],['projects','Projects'],['tickets','Tickets'],['memory','Memory'],['security','Security'],['clients','Clients'],['contracts','Contracts'],['governance','Governance'],['sre-int','SRE Internal'],['sre-ext','SRE External'],['llm','LLM'],['graph','Graph']] as const).map(([t, label]) => (
               <button key={t} onClick={() => setTab(t)} className={`px-3 py-1.5 text-xs font-medium rounded ${tab === t ? 'bg-cyan-600 text-white' : 'text-gray-400 hover:text-white'}`}>
                 {label}
               </button>
@@ -144,9 +212,124 @@ function App() {
         {tab === 'governance' && <GovernanceTab data={extra.governance} token={token} />}
         {tab === 'sre-int' && <SRETab data={extra.sreInt} token={token} scope="internal" title="SRE — Internal Infrastructure" />}
         {tab === 'sre-ext' && <SRETab data={extra.sreExt} token={token} scope="external" title="SRE — External Services" />}
-        {tab === 'graph' && <div><h2 className="text-lg font-semibold mb-4">Infrastructure Knowledge Graph</h2><p className="text-xs text-gray-500 mb-4">491 nodes · 769 edges · 38 communities — interactive visualization of your codebase</p><iframe src="/graphify-out/graph.html" className="w-full rounded-xl border border-gray-800" style={{height:'calc(100vh - 200px)'}} sandbox="allow-scripts allow-same-origin" title="Knowledge Graph" /></div>}
+        {tab === 'graph' && <KnowledgeGraph token={token} />}
+        {tab === 'llm' && <LLMObservability token={token} />}
       </main>
+
+      {/* Global Darius Command Center */}
+      <GlobalDarius token={token} activeTab={tab} />
     </div>
+  )
+}
+
+function GlobalDarius({ token, activeTab }: { token: string; activeTab: string }) {
+  const [open, setOpen] = React.useState(false)
+  const [messages, setMessages] = React.useState<{role:string;content:string}[]>([])
+  const [input, setInput] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [elapsed, setElapsed] = React.useState(0)
+  const timerRef = React.useRef<ReturnType<typeof setInterval> | null>(null)
+  const messagesEndRef = React.useRef<HTMLDivElement>(null)
+  const messagesContainerRef = React.useRef<HTMLDivElement>(null)
+  const [autoScroll, setAutoScroll] = React.useState(true)
+
+  // Smart auto-scroll: only scroll down if user is already at the bottom
+  React.useEffect(() => {
+    if (autoScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, loading])
+
+  // Detect if user scrolled up (disable auto-scroll) or is at bottom (re-enable)
+  function handleScroll() {
+    const el = messagesContainerRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    setAutoScroll(atBottom)
+  }
+
+  async function send() {
+    if (!input.trim()) return
+    const msg = input
+    setMessages(p => [...p, { role: 'user', content: msg }])
+    setInput(''); setLoading(true); setElapsed(0)
+    setAutoScroll(true) // Re-enable auto-scroll when user sends a message
+
+    const start = Date.now()
+    timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+
+    try {
+      const r = await fetch(`${API}/api/darius/global`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, tab: activeTab }),
+      })
+      const d = await r.json()
+      setMessages(p => [...p, { role: 'assistant', content: d.reply }])
+    } catch {
+      setMessages(p => [...p, { role: 'assistant', content: 'Darius unavailable.' }])
+    } finally {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setLoading(false); setElapsed(0)
+    }
+  }
+
+  return (
+    <>
+      {/* Floating trigger button */}
+      <button
+        onClick={() => setOpen(!open)}
+        className={`fixed bottom-6 right-6 z-50 w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all duration-300 ${open ? 'bg-violet-600 rotate-45' : 'bg-violet-600 hover:bg-violet-500 hover:scale-110'}`}
+        aria-label={open ? 'Close Darius' : 'Open Darius'}
+      >
+        <span className="text-white text-lg font-bold">{open ? '+' : '✦'}</span>
+      </button>
+
+      {/* Slide-out panel */}
+      {open && (
+        <div className="fixed bottom-20 right-6 z-50 w-[440px] h-[600px] bg-gray-900 border border-violet-500/20 rounded-2xl shadow-2xl shadow-violet-500/10 flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="text-violet-400 text-sm">✦</span>
+              <span className="text-xs font-medium text-violet-400">Darius</span>
+              <span className="text-[10px] text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">{activeTab}</span>
+            </div>
+            <button onClick={() => setMessages([])} className="text-[10px] text-gray-600 hover:text-gray-400">Clear</button>
+          </div>
+
+          {/* Messages */}
+          <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-3 space-y-3 scroll-smooth">
+            {messages.length === 0 && (
+              <div className="text-center text-gray-600 text-xs mt-8">
+                <p className="text-violet-400/60 text-lg mb-2">✦</p>
+                <p>Ask anything about the <span className="text-violet-400">{activeTab}</span> view.</p>
+                <p className="mt-1 text-gray-700">Context-aware — I see what you see.</p>
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-lg max-w-[90%] ${m.role === 'user' ? 'ml-auto bg-blue-600/20 border border-blue-500/30 text-blue-100' : 'bg-gray-800 border border-gray-700 text-gray-300'}`}>
+                {m.role === 'assistant' ? <DariusMarkdown text={m.content} /> : m.content}
+              </div>
+            ))}
+            {loading && <DariusThinking elapsed={elapsed} onCancel={() => {}} />}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input */}
+          <div className="p-3 border-t border-gray-800 flex gap-2">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && send()}
+              placeholder={`Ask about ${activeTab}...`}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500"
+            />
+            <button onClick={send} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -323,17 +506,51 @@ function GenericTable({ title, data, summary }: { title: string; data: any[]; su
 }
 
 function ProjectsTab({ projects }: { projects: any[] }) {
+  const [expanded, setExpanded] = React.useState<string | null>(null)
+
   return (
     <div>
       <h2 className="text-lg font-semibold mb-4">Projects</h2>
       <div className="grid gap-3">
         {projects.map(p => (
-          <div key={p.name} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-white">{p.name}</p>
-              <a href={p.url} target="_blank" className="text-xs text-cyan-500">{p.url}</a>
+          <div key={p.name} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {/* Main project row */}
+            <div
+              className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-800/50 transition-colors"
+              onClick={() => p.services?.length > 0 && setExpanded(expanded === p.name ? null : p.name)}
+            >
+              <div className="flex items-center gap-3">
+                {p.services?.length > 0 && (
+                  <span className={`text-gray-500 text-xs transition-transform ${expanded === p.name ? 'rotate-90' : ''}`}>▶</span>
+                )}
+                <div>
+                  <p className="text-sm font-medium text-white">{p.name}</p>
+                  <a href={p.url} target="_blank" rel="noopener" className="text-xs text-cyan-500 hover:underline" onClick={e => e.stopPropagation()}>{p.url}</a>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {p.services?.length > 0 && <span className="text-[10px] text-gray-600">{p.services.filter((s: any) => s.status === 'running').length}/{p.services.length} services</span>}
+                <span className={`text-xs ${p.status === 'running' ? 'text-emerald-400' : 'text-red-400'}`}>{p.status}</span>
+              </div>
             </div>
-            <span className={`text-xs ${p.status === 'running' ? 'text-emerald-400' : 'text-red-400'}`}>{p.status}</span>
+
+            {/* Expanded sub-services */}
+            {expanded === p.name && p.services?.length > 0 && (
+              <div className="border-t border-gray-800 bg-gray-950/50">
+                {p.services.map((svc: any) => (
+                  <div key={svc.container} className="px-4 py-2.5 flex items-center justify-between border-b border-gray-800/50 last:border-b-0">
+                    <div className="flex items-center gap-2 pl-6">
+                      <span className={`w-1.5 h-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-400' : svc.status === 'not found' ? 'bg-gray-600' : 'bg-red-400'}`} />
+                      <span className="text-xs text-gray-300">{svc.name}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {svc.url && <a href={svc.url} target="_blank" rel="noopener" className="text-[10px] text-cyan-500/70 hover:text-cyan-400">{svc.url.replace('https://', '')}</a>}
+                      <span className={`text-[10px] ${svc.status === 'running' ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{svc.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -509,9 +726,10 @@ function renderInline(text: string): React.ReactNode {
 
 function ContractsTab({ data, token }: { data: any; token: string }) {
   const [dariusOpen, setDariusOpen] = React.useState(false)
-  const [messages, setMessages] = React.useState<{role:string;content:string}[]>([{role:'assistant',content:'I\'m Darius — your contract intelligence assistant. Ask me about rate optimization, renewal timing, or invoicing strategy.'}])
-  const [input, setInput] = React.useState('')
-  const [loading, setLoading] = React.useState(false)
+  const { messages, input, setInput, loading, elapsed, askDarius, cancel } = useDariusChat(
+    '/api/contracts/darius', token,
+    'I\'m Darius — your contract intelligence assistant. Ask me about rate optimization, renewal timing, or invoicing strategy.'
+  )
   const [charts, setCharts] = React.useState<any>(null)
   const contracts = data?.contracts || []
   const stats = data?.stats || {}
@@ -520,18 +738,6 @@ function ContractsTab({ data, token }: { data: any; token: string }) {
     fetch(`${API}/api/charts/contracts`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json()).then(setCharts).catch(() => null)
   }, [])
-
-  async function askDarius() {
-    if (!input.trim()) return
-    setMessages(p => [...p, {role:'user',content:input}])
-    setInput(''); setLoading(true)
-    try {
-      const r = await fetch(`${API}/api/contracts/darius`, {method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({message:input})})
-      const d = await r.json()
-      setMessages(p => [...p, {role:'assistant',content:d.reply}])
-    } catch { setMessages(p => [...p, {role:'assistant',content:'Darius unavailable.'}]) }
-    setLoading(false)
-  }
 
   const statusColor: Record<string,string> = {active:'bg-emerald-400',pending:'bg-amber-400',completed:'bg-blue-400',expired:'bg-red-400'}
 
@@ -567,7 +773,7 @@ function ContractsTab({ data, token }: { data: any; token: string }) {
       )}
 
       <div className="flex gap-4">
-        <div className={`${dariusOpen ? 'w-[60%]' : 'w-full'} bg-gray-900 border border-gray-800 rounded-xl overflow-hidden`}>
+        <div className={`w-full bg-gray-900 border border-gray-800 rounded-xl overflow-hidden`}>
           <table className="w-full text-sm">
             <thead><tr className="border-b border-gray-800 text-gray-500 text-xs">
               <th className="text-left px-4 py-3">ID</th><th className="text-left px-4 py-3">Role</th><th className="text-left px-4 py-3">Client</th><th className="text-left px-4 py-3">Firm</th><th className="text-right px-4 py-3">Net Rate</th><th className="text-right px-4 py-3">Outstanding</th><th className="px-4 py-3">Status</th>
@@ -597,11 +803,244 @@ function ContractsTab({ data, token }: { data: any; token: string }) {
                   {m.role === 'assistant' ? <DariusMarkdown text={m.content} /> : m.content}
                 </div>
               ))}
-              {loading && <div className="text-xs text-gray-500 animate-pulse px-3">Thinking...</div>}
+              {loading && <DariusThinking elapsed={elapsed} onCancel={cancel} />}
             </div>
             <div className="p-3 border-t border-gray-800 flex gap-2">
               <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && askDarius()} placeholder="Ask Darius..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500" />
-              <button onClick={askDarius} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
+              <button onClick={() => askDarius()} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function LLMObservability({ token }: { token: string }) {
+  const [data, setData] = React.useState<any>(null)
+  const [dariusOpen, setDariusOpen] = React.useState(false)
+  const { messages, input, setInput, loading, elapsed, askDarius, cancel } = useDariusChat(
+    '/api/llm/darius', token,
+    'I\'m Darius — your LLM observability assistant. Ask me about SLO breaches, error budgets, model performance, latency issues, or cost optimization.'
+  )
+
+  React.useEffect(() => {
+    fetch(`${API}/api/llm/observability`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json()).then(setData).catch(() => null)
+  }, [])
+
+  if (!data) return <div className="text-gray-500 text-sm">Loading LLM data...</div>
+
+  const sli = data.sli_values || {}
+  const slos = data.slos || []
+  const perAgent = data.per_agent || []
+  const errorBudgets = data.error_budgets || []
+  const localVsCloud = data.local_vs_cloud || { local: [], cloud: [], fallback_count_7d: 0 }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold">LLM Observability</h2>
+        <button onClick={() => setDariusOpen(!dariusOpen)} className={`px-3 py-1.5 text-xs font-medium rounded ${dariusOpen ? 'bg-violet-600 text-white' : 'bg-gray-800 text-violet-400 border border-violet-500/30'}`}>
+          ✦ Darius AI
+        </button>
+      </div>
+
+      <div className="flex gap-4">
+        <div className={`w-full space-y-4`}>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"><p className="text-xs text-gray-500 mb-1">Availability</p><p className={`text-xl font-bold ${sli.availability >= 99.5 ? 'text-emerald-400' : sli.availability >= 95 ? 'text-amber-400' : 'text-red-400'}`}>{sli.availability}%</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"><p className="text-xs text-gray-500 mb-1">P95 Latency</p><p className={`text-xl font-bold ${sli.latency_p95_ms <= 35000 ? 'text-emerald-400' : 'text-red-400'}`}>{(sli.latency_p95_ms / 1000).toFixed(1)}s</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"><p className="text-xs text-gray-500 mb-1">Error Rate</p><p className={`text-xl font-bold ${sli.error_rate <= 2 ? 'text-emerald-400' : 'text-red-400'}`}>{sli.error_rate}%</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"><p className="text-xs text-gray-500 mb-1">Tokens Today</p><p className="text-xl font-bold text-cyan-400">{((sli.tokens_today || 0) / 1000).toFixed(0)}K</p></div>
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4"><p className="text-xs text-gray-500 mb-1">Cache Hit Rate</p><p className={`text-xl font-bold ${sli.cache_hit_rate >= 20 ? 'text-emerald-400' : 'text-amber-400'}`}>{sli.cache_hit_rate}%</p></div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <h3 className="text-sm font-medium text-gray-400 mb-3">SLO Targets</h3>
+              <div className="space-y-2">
+                {slos.map((s: any) => {
+                  let current = 0
+                  if (s.metric === 'availability') current = sli.availability || 0
+                  else if (s.metric === 'latency_p95') current = sli.latency_p95_ms || 0
+                  else if (s.metric === 'error_rate') current = sli.error_rate || 0
+                  else if (s.metric === 'token_budget') current = sli.tokens_today || 0
+                  else if (s.metric === 'cache_hit_rate') current = sli.cache_hit_rate || 0
+                  const met = s.metric === 'error_rate' ? current <= s.target : s.metric === 'latency_p95' ? current <= s.target : current >= s.target
+                  return (
+                    <div key={s.name} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-300">{s.description}</span>
+                      <span className={`font-medium ${met ? 'text-emerald-400' : 'text-red-400'}`}>{met ? '✓ Met' : '✗ Breached'}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <h3 className="text-sm font-medium text-gray-400 mb-3">Error Budgets</h3>
+              {errorBudgets.length === 0 ? <p className="text-xs text-gray-600">No budget data yet</p> : (
+                <div className="space-y-3">
+                  {errorBudgets.map((b: any) => {
+                    const pct = b.budget_total > 0 ? Math.min(100, (b.budget_consumed / b.budget_total) * 100) : 0
+                    const color = b.status === 'healthy' ? 'bg-emerald-400' : b.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'
+                    return (
+                      <div key={b.slo_name}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-gray-300">{b.slo_name.replace(/_/g, ' ')}</span>
+                          <span className={`font-medium ${b.status === 'healthy' ? 'text-emerald-400' : b.status === 'warning' ? 'text-amber-400' : 'text-red-400'}`}>{b.status}</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                          <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="text-[10px] text-gray-600 mt-0.5">{b.budget_consumed.toFixed(1)} / {b.budget_total.toFixed(1)} consumed</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <h3 className="text-sm font-medium text-gray-400 mb-3">Failures (7d)</h3>
+              {(data.failures || []).length === 0 ? <p className="text-xs text-gray-600">No failures recorded</p> : (
+                <div className="space-y-2">
+                  {data.failures.map((f: any) => (
+                    <div key={f.failure_type} className="flex items-center justify-between text-xs">
+                      <span className="text-red-400">{f.failure_type}</span>
+                      <span className="text-gray-500">{f.count}x</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {data.latency_trend?.length > 0 && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <h3 className="text-sm font-medium text-gray-400 mb-3">Latency Trend (24h)</h3>
+                <MiniChart data={data.latency_trend.map((l: any) => ({ time: l.hour?.slice(11, 16) || '', value: l.avg_latency }))} color="#22d3ee" />
+              </div>
+            )}
+          </div>
+
+          {(localVsCloud.local.length > 0 || localVsCloud.cloud.length > 0) && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-gray-400">Local vs Cloud — Model Comparison (7d)</h3>
+                {localVsCloud.fallback_count_7d > 0 && (
+                  <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded">{localVsCloud.fallback_count_7d} fallbacks to Claude</span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {localVsCloud.local.length > 0 && (
+                  <div>
+                    <div className="text-[10px] text-violet-400 font-medium mb-2 uppercase tracking-wide">Local (Ollama)</div>
+                    <div className="space-y-2">
+                      {localVsCloud.local.map((m: any) => (
+                        <div key={m.model} className="flex items-center justify-between text-xs bg-gray-800/50 rounded px-3 py-2">
+                          <span className="text-gray-300 font-medium">{m.model}</span>
+                          <div className="flex gap-3 text-gray-500">
+                            <span>{m.total_calls} calls</span>
+                            <span className={m.availability >= 95 ? 'text-emerald-400' : 'text-red-400'}>{m.availability}%</span>
+                            <span>{(m.avg_latency_ms / 1000).toFixed(1)}s avg</span>
+                            <span>{(m.p95_latency_ms / 1000).toFixed(1)}s p95</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {localVsCloud.cloud.length > 0 && (
+                  <div>
+                    <div className="text-[10px] text-cyan-400 font-medium mb-2 uppercase tracking-wide">Cloud (Claude)</div>
+                    <div className="space-y-2">
+                      {localVsCloud.cloud.map((m: any) => (
+                        <div key={m.model} className="flex items-center justify-between text-xs bg-gray-800/50 rounded px-3 py-2">
+                          <span className="text-gray-300 font-medium">{m.model}</span>
+                          <div className="flex gap-3 text-gray-500">
+                            <span>{m.total_calls} calls</span>
+                            <span className={m.availability >= 95 ? 'text-emerald-400' : 'text-red-400'}>{m.availability}%</span>
+                            <span>{(m.avg_latency_ms / 1000).toFixed(1)}s avg</span>
+                            <span>{(m.p95_latency_ms / 1000).toFixed(1)}s p95</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {perAgent.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800 text-xs font-medium text-gray-400">Per-Agent SLI (24h)</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="border-b border-gray-800 text-gray-500">
+                    <th className="text-left px-3 py-2">Agent</th>
+                    <th className="text-right px-3 py-2">Calls</th>
+                    <th className="text-right px-3 py-2">Avail %</th>
+                    <th className="text-right px-3 py-2">Avg Latency</th>
+                    <th className="text-right px-3 py-2">Cache Hits</th>
+                    <th className="text-right px-3 py-2">Cost</th>
+                  </tr></thead>
+                  <tbody>
+                    {perAgent.map((a: any) => (
+                      <tr key={a.agent} className="border-b border-gray-800/50">
+                        <td className="px-3 py-2 text-gray-300">{a.agent}</td>
+                        <td className="px-3 py-2 text-right text-gray-400">{a.total_calls}</td>
+                        <td className="px-3 py-2 text-right"><span className={a.availability >= 99 ? 'text-emerald-400' : a.availability >= 95 ? 'text-amber-400' : 'text-red-400'}>{a.availability}%</span></td>
+                        <td className="px-3 py-2 text-right text-gray-400">{(a.avg_latency_ms / 1000).toFixed(1)}s</td>
+                        <td className="px-3 py-2 text-right text-gray-500">{a.cache_hits}</td>
+                        <td className="px-3 py-2 text-right text-gray-500">${a.total_cost.toFixed(3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-800 text-xs font-medium text-gray-400">Recent Traces ({data.traces?.length || 0})</div>
+            <div className="max-h-64 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="border-b border-gray-800 text-gray-500"><th className="text-left px-3 py-2">Agent</th><th className="text-left px-3 py-2">Model</th><th className="text-left px-3 py-2">Task</th><th className="text-right px-3 py-2">Latency</th><th className="text-right px-3 py-2">Tokens</th><th className="px-3 py-2">Status</th></tr></thead>
+                <tbody>
+                  {(data.traces || []).slice(0, 20).map((t: any) => (
+                    <tr key={t.trace_id} className="border-b border-gray-800/50">
+                      <td className="px-3 py-2 text-gray-300">{t.agent}</td>
+                      <td className="px-3 py-2 text-gray-500">{t.model?.split('-').slice(-2).join('-')}</td>
+                      <td className="px-3 py-2 text-gray-400 truncate max-w-[200px]">{t.task_preview}</td>
+                      <td className="px-3 py-2 text-right text-gray-400">{t.cached ? '⚡cache' : `${(t.latency_ms / 1000).toFixed(1)}s`}</td>
+                      <td className="px-3 py-2 text-right text-gray-500">{((t.input_tokens + t.output_tokens) / 1000).toFixed(1)}K</td>
+                      <td className="px-3 py-2 text-center"><span className={`w-2 h-2 inline-block rounded-full ${t.status === 'success' ? 'bg-emerald-400' : t.status === 'rate_limited' ? 'bg-amber-400' : 'bg-red-400'}`} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {dariusOpen && (
+          <div className="w-[40%] bg-gray-900 border border-violet-500/20 rounded-xl flex flex-col h-[600px] sticky top-4">
+            <div className="px-4 py-3 border-b border-gray-800 text-xs font-medium text-violet-400">✦ Darius — LLM Observability</div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {messages.map((m, i) => (
+                <div key={i} className={`text-xs leading-relaxed px-3 py-2 rounded-lg max-w-[90%] ${m.role === 'user' ? 'ml-auto bg-blue-600/20 border border-blue-500/30 text-blue-100' : 'bg-gray-800 border border-gray-700 text-gray-300'}`}>
+                  {m.role === 'assistant' ? <DariusMarkdown text={m.content} /> : m.content}
+                </div>
+              ))}
+              {loading && <DariusThinking elapsed={elapsed} onCancel={cancel} />}
+            </div>
+            <div className="p-3 border-t border-gray-800 flex gap-2">
+              <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && askDarius()} placeholder="Ask about SLOs, breaches, costs..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500" />
+              <button onClick={() => askDarius()} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
             </div>
           </div>
         )}
@@ -612,9 +1051,10 @@ function ContractsTab({ data, token }: { data: any; token: string }) {
 
 function SRETab({ data, token, scope, title }: { data: any; token: string; scope: string; title: string }) {
   const [dariusOpen, setDariusOpen] = React.useState(false)
-  const [messages, setMessages] = React.useState<{role:string;content:string}[]>([{role:'assistant',content:`I'm Darius — your SRE assistant for ${scope} infrastructure. Ask about service health, latency, incidents, capacity, or troubleshooting.`}])
-  const [input, setInput] = React.useState('')
-  const [loading, setLoading] = React.useState(false)
+  const { messages, input, setInput, loading, elapsed, askDarius, cancel } = useDariusChat(
+    '/api/sre/darius', token,
+    `I'm Darius — your SRE assistant for ${scope} infrastructure. Ask about service health, latency, incidents, capacity, or troubleshooting.`
+  )
   const [charts, setCharts] = React.useState<any>(null)
   const services = data?.services || []
   const endpoints = data?.endpoints || []
@@ -625,17 +1065,7 @@ function SRETab({ data, token, scope, title }: { data: any; token: string; scope
       .then(r => r.json()).then(setCharts).catch(() => null)
   }, [])
 
-  async function askDarius() {
-    if (!input.trim()) return
-    setMessages(p => [...p, {role:'user',content:input}])
-    setInput(''); setLoading(true)
-    try {
-      const r = await fetch(`${API}/api/sre/darius`, {method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({message:input, scope})})
-      const d = await r.json()
-      setMessages(p => [...p, {role:'assistant',content:d.reply}])
-    } catch { setMessages(p => [...p, {role:'assistant',content:'Darius unavailable.'}]) }
-    setLoading(false)
-  }
+  const handleAskDarius = React.useCallback(() => askDarius({ scope }), [askDarius, scope])
 
   return (
     <div>
@@ -654,7 +1084,7 @@ function SRETab({ data, token, scope, title }: { data: any; token: string; scope
       </div>
 
       <div className="flex gap-3">
-        <div className={`${dariusOpen ? 'w-[60%]' : 'w-full'} space-y-3`}>
+        <div className={`w-full space-y-3`}>
           {charts?.snapshots?.length > 0 && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3" style={{ gridAutoRows: '240px' }}>
               <Panel title="Containers Running" subtitle="24h">
@@ -714,11 +1144,11 @@ function SRETab({ data, token, scope, title }: { data: any; token: string; scope
                   {m.role === 'assistant' ? <DariusMarkdown text={m.content} /> : m.content}
                 </div>
               ))}
-              {loading && <div className="text-xs text-gray-500 animate-pulse px-3">Thinking...</div>}
+              {loading && <DariusThinking elapsed={elapsed} onCancel={cancel} />}
             </div>
             <div className="p-3 border-t border-gray-800 flex gap-2 shrink-0">
-              <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && askDarius()} placeholder="Ask about services..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500" />
-              <button onClick={askDarius} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
+              <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAskDarius()} placeholder="Ask about services..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500" />
+              <button onClick={handleAskDarius} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
             </div>
           </div>
         )}
@@ -729,24 +1159,13 @@ function SRETab({ data, token, scope, title }: { data: any; token: string; scope
 
 function GovernanceTab({ data, token }: { data: any; token: string }) {
   const [dariusOpen, setDariusOpen] = React.useState(false)
-  const [messages, setMessages] = React.useState<{role:string;content:string}[]>([{role:'assistant',content:'I\'m Darius — your governance & compliance assistant. Ask me about HIPAA controls, security gaps, policy status, or compliance readiness.'}])
-  const [input, setInput] = React.useState('')
-  const [loading, setLoading] = React.useState(false)
+  const { messages, input, setInput, loading, elapsed, askDarius, cancel } = useDariusChat(
+    '/api/governance/darius', token,
+    'I\'m Darius — your governance & compliance assistant. Ask me about HIPAA controls, security gaps, policy status, or compliance readiness.'
+  )
   const summary = data?.summary || {}
   const policies = data?.policies || []
   const tickets = data?.tickets || []
-
-  async function askDarius() {
-    if (!input.trim()) return
-    setMessages(p => [...p, {role:'user',content:input}])
-    setInput(''); setLoading(true)
-    try {
-      const r = await fetch(`${API}/api/governance/darius`, {method:'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({message:input})})
-      const d = await r.json()
-      setMessages(p => [...p, {role:'assistant',content:d.reply}])
-    } catch { setMessages(p => [...p, {role:'assistant',content:'Darius unavailable.'}]) }
-    setLoading(false)
-  }
 
   return (
     <div>
@@ -765,7 +1184,7 @@ function GovernanceTab({ data, token }: { data: any; token: string }) {
       </div>
 
       <div className="flex gap-4">
-        <div className={`${dariusOpen ? 'w-[60%]' : 'w-full'} space-y-4`}>
+        <div className={`w-full space-y-4`}>
           <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-800 text-xs font-medium text-gray-400">Policy Documents</div>
             <div className="divide-y divide-gray-800/50">
@@ -806,14 +1225,398 @@ function GovernanceTab({ data, token }: { data: any; token: string }) {
                   {m.role === 'assistant' ? <DariusMarkdown text={m.content} /> : m.content}
                 </div>
               ))}
-              {loading && <div className="text-xs text-gray-500 animate-pulse px-3">Thinking...</div>}
+              {loading && <DariusThinking elapsed={elapsed} onCancel={cancel} />}
             </div>
             <div className="p-3 border-t border-gray-800 flex gap-2">
               <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && askDarius()} placeholder="Ask about compliance..." className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-violet-500" />
-              <button onClick={askDarius} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
+              <button onClick={() => askDarius()} disabled={loading} className="px-3 py-2 bg-violet-600 rounded-lg text-xs disabled:opacity-50">→</button>
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── Knowledge Graph ──────────────────────────────────────────────────────────
+
+const NODE_COLORS: Record<string, string> = {
+  code: '#6b7280',
+  doc: '#8b5cf6',
+  concept: '#f59e0b',
+  agent: '#22d3ee',
+  service: '#34d399',
+}
+
+const NODE_SIZES: Record<string, number> = {
+  code: 2,
+  doc: 5,
+  concept: 4,
+  agent: 7,
+  service: 6,
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  running: '#34d399',
+  exited: '#ef4444',
+  unknown: '#6b7280',
+}
+
+interface GraphNode {
+  id: string
+  label: string
+  file_type: string
+  source_file?: string
+  content?: string
+  community_name?: string
+  status?: string
+  _origin?: string
+  x?: number
+  y?: number
+}
+
+interface GraphEdge {
+  source: string | GraphNode
+  target: string | GraphNode
+  label?: string
+  type?: string
+}
+
+interface GraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  stats: {
+    total_nodes: number
+    total_edges: number
+    code_nodes: number
+    doc_nodes: number
+    concept_nodes: number
+    agent_nodes: number
+    service_nodes: number
+  }
+}
+
+function KnowledgeGraph({ token }: { token: string }) {
+  const [graphData, setGraphData] = useState<GraphData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<string[]>([])
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [filter, setFilter] = useState<string>('all')
+  const [includeCode, setIncludeCode] = useState(false)
+  const graphRef = useRef<any>(null)
+
+  // Load graph data
+  useEffect(() => {
+    const h = { Authorization: `Bearer ${token}` }
+    fetch(`${API}/api/graph?include_code=${includeCode}`, { headers: h })
+      .then(r => r.json())
+      .then(data => {
+        setGraphData(data)
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [token, includeCode])
+
+  // Search handler
+  const handleSearch = useCallback(async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      return
+    }
+    const h = { Authorization: `Bearer ${token}` }
+    try {
+      const res = await fetch(`${API}/api/graph/search?q=${encodeURIComponent(searchQuery)}&limit=15`, { headers: h })
+      const data = await res.json()
+      setSearchResults(data.highlighted_nodes || [])
+
+      // Zoom to first result
+      if (data.highlighted_nodes?.length > 0 && graphRef.current) {
+        const nodeId = data.highlighted_nodes[0]
+        const node = graphData?.nodes.find(n => n.id === nodeId)
+        if (node && node.x != null && node.y != null) {
+          graphRef.current.centerAt(node.x, node.y, 500)
+          graphRef.current.zoom(3, 500)
+        }
+      }
+    } catch {
+      setSearchResults([])
+    }
+  }, [searchQuery, token, graphData])
+
+  // Filter graph data
+  const filteredData = React.useMemo(() => {
+    if (!graphData) return { nodes: [], links: [] }
+
+    let nodes = graphData.nodes
+    if (filter !== 'all') {
+      nodes = nodes.filter(n => n.file_type === filter)
+    }
+
+    const nodeIds = new Set(nodes.map(n => n.id))
+    const links = graphData.edges
+      .filter(e => {
+        const src = typeof e.source === 'string' ? e.source : e.source?.id
+        const tgt = typeof e.target === 'string' ? e.target : e.target?.id
+        return src && tgt && nodeIds.has(src) && nodeIds.has(tgt)
+      })
+      .map(e => ({
+        source: typeof e.source === 'string' ? e.source : e.source?.id,
+        target: typeof e.target === 'string' ? e.target : e.target?.id,
+        label: e.label,
+      }))
+
+    return { nodes, links }
+  }, [graphData, filter])
+
+  // Node paint function
+  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D) => {
+    const size = NODE_SIZES[node.file_type] || 3
+    const isHighlighted = searchResults.includes(node.id)
+    const isSelected = selectedNode?.id === node.id
+
+    // Draw node circle
+    ctx.beginPath()
+    ctx.arc(node.x, node.y, size, 0, 2 * Math.PI)
+
+    if (isHighlighted) {
+      ctx.fillStyle = '#fbbf24'
+      ctx.shadowColor = '#fbbf24'
+      ctx.shadowBlur = 8
+    } else if (isSelected) {
+      ctx.fillStyle = '#ffffff'
+      ctx.shadowColor = '#ffffff'
+      ctx.shadowBlur = 6
+    } else {
+      ctx.fillStyle = NODE_COLORS[node.file_type] || '#6b7280'
+      ctx.shadowBlur = 0
+    }
+    ctx.fill()
+    ctx.shadowBlur = 0
+
+    // Draw status ring for agents/services
+    if (node.status && (node.file_type === 'agent' || node.file_type === 'service')) {
+      ctx.beginPath()
+      ctx.arc(node.x, node.y, size + 2, 0, 2 * Math.PI)
+      ctx.strokeStyle = STATUS_COLORS[node.status] || '#6b7280'
+      ctx.lineWidth = 1.5
+      ctx.stroke()
+    }
+
+    // Label for non-code nodes or highlighted/selected
+    if (node.file_type !== 'code' || isHighlighted || isSelected) {
+      ctx.font = `${isHighlighted || isSelected ? 'bold ' : ''}${size > 4 ? 4 : 3}px sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'top'
+      ctx.fillStyle = isHighlighted ? '#fbbf24' : '#9ca3af'
+      ctx.fillText(node.label?.slice(0, 24) || '', node.x, node.y + size + 2)
+    }
+  }, [searchResults, selectedNode])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-gray-500 text-sm">Loading knowledge graph...</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-140px)]">
+      {/* Main graph area */}
+      <div className="flex-1 relative">
+        {/* Controls bar */}
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 p-3 bg-gray-950/80 backdrop-blur-sm border-b border-gray-800">
+          {/* Search */}
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              placeholder="Search the knowledge graph..."
+              className="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-sm text-white outline-none focus:border-cyan-500"
+            />
+            <button onClick={handleSearch} className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium rounded-md">
+              Search
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="flex gap-1">
+            {[
+              ['all', 'All'],
+              ['agent', 'Agents'],
+              ['service', 'Infra'],
+              ['doc', 'Docs'],
+              ['concept', 'Concepts'],
+              ['code', 'Code'],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`px-2 py-1 text-[10px] font-medium rounded ${filter === key ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Include code toggle */}
+          <label className="flex items-center gap-1.5 text-[10px] text-gray-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeCode}
+              onChange={e => setIncludeCode(e.target.checked)}
+              className="rounded border-gray-600"
+            />
+            Code nodes
+          </label>
+
+          {/* Stats */}
+          {graphData?.stats && (
+            <div className="text-[10px] text-gray-600 ml-auto">
+              {filteredData.nodes.length} nodes · {filteredData.links.length} edges
+            </div>
+          )}
+        </div>
+
+        {/* Force graph */}
+        <ForceGraph2D
+          ref={graphRef}
+          graphData={filteredData}
+          nodeCanvasObject={paintNode}
+          nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
+            const size = NODE_SIZES[node.file_type] || 3
+            ctx.beginPath()
+            ctx.arc(node.x, node.y, size + 2, 0, 2 * Math.PI)
+            ctx.fillStyle = color
+            ctx.fill()
+          }}
+          onNodeClick={(node: any) => setSelectedNode(node)}
+          linkColor={() => '#1f293780'}
+          linkWidth={0.5}
+          backgroundColor="#030712"
+          cooldownTicks={100}
+          d3AlphaDecay={0.03}
+          d3VelocityDecay={0.4}
+        />
+      </div>
+
+      {/* Sidebar — node details */}
+      <div className="w-72 border-l border-gray-800 bg-gray-900/50 overflow-y-auto">
+        <div className="p-4">
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">
+            {selectedNode ? 'Node Details' : 'Knowledge Graph'}
+          </h3>
+
+          {!selectedNode ? (
+            <div className="space-y-4">
+              <p className="text-xs text-gray-500">
+                Click any node to see details. Use search to find specific concepts, agents, or docs.
+              </p>
+
+              {/* Legend */}
+              <div className="space-y-2">
+                <p className="text-[10px] text-gray-600 uppercase font-medium">Legend</p>
+                {Object.entries(NODE_COLORS).map(([type, color]) => (
+                  <div key={type} className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+                    <span className="text-xs text-gray-400 capitalize">{type}</span>
+                    <span className="text-[10px] text-gray-600 ml-auto">
+                      {graphData?.stats?.[`${type}_nodes` as keyof typeof graphData.stats] || 0}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Status legend */}
+              <div className="space-y-2">
+                <p className="text-[10px] text-gray-600 uppercase font-medium">Status Ring</p>
+                {Object.entries(STATUS_COLORS).map(([status, color]) => (
+                  <div key={status} className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full border-2" style={{ borderColor: color, backgroundColor: 'transparent' }} />
+                    <span className="text-xs text-gray-400 capitalize">{status}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Search results */}
+              {searchResults.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-[10px] text-gray-600 uppercase font-medium">Search Results ({searchResults.length})</p>
+                  {searchResults.map(id => {
+                    const node = graphData?.nodes.find(n => n.id === id)
+                    return node ? (
+                      <button
+                        key={id}
+                        onClick={() => {
+                          setSelectedNode(node)
+                          if (graphRef.current && node.x != null && node.y != null) {
+                            graphRef.current.centerAt(node.x, node.y, 500)
+                            graphRef.current.zoom(3, 500)
+                          }
+                        }}
+                        className="block w-full text-left px-2 py-1 text-xs text-gray-300 hover:bg-gray-800 rounded truncate"
+                      >
+                        <span className="w-2 h-2 rounded-full inline-block mr-1.5" style={{ backgroundColor: NODE_COLORS[node.file_type] || '#6b7280' }} />
+                        {node.label}
+                      </button>
+                    ) : null
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Selected node details */}
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: NODE_COLORS[selectedNode.file_type] || '#6b7280' }} />
+                <span className="text-sm font-medium text-white">{selectedNode.label}</span>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div>
+                  <span className="text-gray-500">Type:</span>
+                  <span className="text-gray-300 ml-2 capitalize">{selectedNode.file_type}</span>
+                </div>
+                {selectedNode.community_name && (
+                  <div>
+                    <span className="text-gray-500">Community:</span>
+                    <span className="text-gray-300 ml-2">{selectedNode.community_name}</span>
+                  </div>
+                )}
+                {selectedNode.source_file && (
+                  <div>
+                    <span className="text-gray-500">Source:</span>
+                    <span className="text-gray-300 ml-2 break-all">{selectedNode.source_file}</span>
+                  </div>
+                )}
+                {selectedNode.status && (
+                  <div>
+                    <span className="text-gray-500">Status:</span>
+                    <span className="ml-2" style={{ color: STATUS_COLORS[selectedNode.status] || '#6b7280' }}>
+                      {selectedNode.status}
+                    </span>
+                  </div>
+                )}
+                {selectedNode.content && (
+                  <div className="mt-2 p-2 bg-gray-800/50 rounded text-gray-400 text-[11px] leading-relaxed">
+                    {selectedNode.content.slice(0, 300)}
+                    {selectedNode.content.length > 300 && '...'}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => setSelectedNode(null)}
+                className="text-[10px] text-gray-600 hover:text-gray-400"
+              >
+                ← Back to overview
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

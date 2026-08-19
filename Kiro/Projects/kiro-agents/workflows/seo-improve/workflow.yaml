@@ -1,0 +1,12 @@
+name: SEO Improvement
+trigger: seo-improve
+description: End-to-end SEO improvement — collect data, analyze, generate fix, preview, validate
+params:
+  domain:
+    default: melanin-tech.com
+    description: Target domain
+  finding_type:
+    required: false
+    description: Specific finding type to address (e.g. low_ctr, faq_gap)
+created_at: "2026-07-17"
+created_by: system

@@ -1,0 +1,53 @@
+name: Update Documentation
+trigger: update-docs
+description: Auto-update project documentation when architecture changes are made. Updates MANIFEST.md, CONTEXT.md, and relevant docs.
+params:
+  change_summary:
+    required: true
+    description: Brief description of what changed (e.g. "Added MCP gateway service")
+  files_changed:
+    required: false
+    description: Comma-separated list of files that were modified
+
+steps:
+  - id: audit
+    type: darius
+    task: >
+      Read the current MANIFEST.md and CONTEXT.md files in the kiro-agents project.
+      Then read the following changed files: {{files_changed}}.
+      Identify what sections of MANIFEST.md and CONTEXT.md need updating based on this change: {{change_summary}}.
+      Return a JSON object with: {"manifest_updates": ["section: change"], "context_updates": ["section: change"], "new_docs_needed": []}
+    project: kiro-agents
+    approve: false
+
+  - id: update-manifest
+    type: agent
+    agent: code
+    task: >
+      Update MANIFEST.md to reflect this change: {{change_summary}}.
+      Only update the relevant sections — do not rewrite the entire file.
+      Add new services, tools, or infrastructure to the appropriate tables.
+    project: kiro-agents
+    approve: true
+    depends_on: audit
+
+  - id: update-context
+    type: agent
+    agent: code
+    task: >
+      Update CONTEXT.md to reflect this change: {{change_summary}}.
+      Only update the relevant sections. Keep the file concise and factual.
+      Do not add aspirational content — only document what exists and runs today.
+    project: kiro-agents
+    approve: true
+    depends_on: audit
+
+  - id: verify
+    type: agent
+    agent: qa
+    task: >
+      Review the documentation updates to MANIFEST.md and CONTEXT.md.
+      Verify: 1) No aspirational content, 2) Accurate technical details, 3) Consistent formatting, 4) All referenced services/paths exist.
+    project: kiro-agents
+    approve: false
+    depends_on: update-manifest

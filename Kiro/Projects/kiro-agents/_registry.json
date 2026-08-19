@@ -1,0 +1,183 @@
+{
+  "$schema": "melanin-tech://tool-registry/v1",
+  "version": "1.0.0",
+  "lastUpdated": "2026-07-17",
+  "description": "Unified tool registry for Darius and all agents. Tools are discoverable by description.",
+
+  "mcp_sidecars": {
+    "github": {
+      "url": "http://mcp-github:9010",
+      "protocol": "sse",
+      "description": "GitHub operations — repos, PRs, issues, file contents, commits, gists",
+      "tools": [
+        {"name": "search_repositories", "description": "Search GitHub repositories by query"},
+        {"name": "get_file_contents", "description": "Read a file from a GitHub repository"},
+        {"name": "create_or_update_file", "description": "Create or update a file in a GitHub repo"},
+        {"name": "create_pull_request", "description": "Open a pull request on a repository"},
+        {"name": "list_issues", "description": "List issues for a repository"},
+        {"name": "create_issue", "description": "Create a new GitHub issue"},
+        {"name": "push_files", "description": "Push multiple files to a repository in one commit"},
+        {"name": "list_commits", "description": "List recent commits on a branch"}
+      ]
+    },
+    "postgres": {
+      "url": "http://mcp-postgres:9011",
+      "protocol": "json-rpc",
+      "description": "PostgreSQL database operations — queries, schema inspection",
+      "tools": [
+        {"name": "query", "description": "Execute a read-only SQL query and return results"},
+        {"name": "list_tables", "description": "List all tables in the database"},
+        {"name": "describe_table", "description": "Get column info for a specific table"}
+      ]
+    },
+    "figma": {
+      "url": "http://mcp-figma:9012",
+      "protocol": "sse",
+      "description": "Figma design operations — read files, nodes, styles, components",
+      "tools": [
+        {"name": "get_file", "description": "Get Figma file metadata and page list"},
+        {"name": "get_node", "description": "Get a specific node from a Figma file"},
+        {"name": "get_styles", "description": "Get design styles from a Figma file"},
+        {"name": "get_components", "description": "Get components from a Figma file"}
+      ]
+    },
+    "fetch": {
+      "url": "http://mcp-fetch:9013",
+      "protocol": "json-rpc",
+      "description": "Web content fetching — retrieve and extract text from URLs",
+      "tools": [
+        {"name": "fetch", "description": "Fetch a URL and return its text content (HTML stripped)"}
+      ]
+    },
+    "slack": {
+      "url": "http://mcp-slack:9014",
+      "protocol": "json-rpc",
+      "description": "Slack messaging — send messages, read channels, manage threads",
+      "status": "planned",
+      "tools": [
+        {"name": "send_message", "description": "Send a message to a Slack channel"},
+        {"name": "read_channel", "description": "Read recent messages from a channel"},
+        {"name": "reply_thread", "description": "Reply to a specific message thread"}
+      ]
+    },
+    "google": {
+      "url": "http://mcp-google:9015",
+      "protocol": "json-rpc",
+      "description": "Google APIs — Search Console, Gmail, Calendar",
+      "status": "planned",
+      "tools": [
+        {"name": "gsc_query", "description": "Query Google Search Console for keyword performance data"},
+        {"name": "gmail_read", "description": "Read recent emails from inbox"},
+        {"name": "gmail_send", "description": "Send an email via Gmail"},
+        {"name": "calendar_list", "description": "List upcoming calendar events"},
+        {"name": "calendar_create", "description": "Create a calendar event"}
+      ]
+    },
+    "cloudflare": {
+      "url": "http://mcp-cloudflare:9016",
+      "protocol": "json-rpc",
+      "description": "Cloudflare DNS and cache management",
+      "status": "planned",
+      "tools": [
+        {"name": "purge_cache", "description": "Purge Cloudflare cache for a domain"},
+        {"name": "list_dns_records", "description": "List DNS records for a zone"},
+        {"name": "update_dns_record", "description": "Update a DNS record"}
+      ]
+    },
+    "docker": {
+      "url": "http://mcp-docker:9017",
+      "protocol": "json-rpc",
+      "description": "Docker container management — list, restart, logs, build",
+      "status": "planned",
+      "tools": [
+        {"name": "list_containers", "description": "List running Docker containers with status"},
+        {"name": "restart_container", "description": "Restart a specific container"},
+        {"name": "container_logs", "description": "Get recent logs from a container"},
+        {"name": "build_and_deploy", "description": "Build an image and restart the service"}
+      ]
+    }
+  },
+
+  "internal_tools": {
+    "mcp_proxy": {
+      "url": "http://mcp-server:9000",
+      "description": "Internal MCP proxy — unified /tools/invoke endpoint",
+      "tools": [
+        {"name": "list_files", "description": "List files in a directory within agent scope"},
+        {"name": "read_file", "description": "Read file contents within agent scope (50KB cap)"},
+        {"name": "recall_memory", "description": "Recall semantically similar past tasks from vector memory"},
+        {"name": "project_info", "description": "Get structured metadata about a named project"},
+        {"name": "figma_file", "description": "Get Figma file metadata and page list"},
+        {"name": "figma_node", "description": "Get a specific Figma node by ID"},
+        {"name": "web_fetch", "description": "Fetch a URL and return its text content (20KB cap)"},
+        {"name": "shell_exec", "description": "Execute a shell command (DeployAgent/ScaffoldAgent only)"}
+      ]
+    },
+    "playwright": {
+      "url": "http://playwright-mcp:9001",
+      "description": "Visual tools — screenshots, Lighthouse audits, visual diffs, font extraction",
+      "tools": [
+        {"name": "screenshot", "description": "Take a desktop screenshot of a URL (1440x900)"},
+        {"name": "screenshot_mobile", "description": "Take a mobile screenshot (390x844)"},
+        {"name": "audit_visual", "description": "Screenshot at desktop, tablet, and mobile breakpoints"},
+        {"name": "audit_lighthouse", "description": "Run Lighthouse audit — performance, a11y, SEO scores"},
+        {"name": "diff", "description": "Compare two screenshots and return pixel diff percentage"},
+        {"name": "extract", "description": "Extract fonts, colors, and computed styles from a rendered page"}
+      ]
+    },
+    "searxng": {
+      "url": "http://searxng:8080",
+      "description": "Private web search via SearXNG — research, SERP tracking, keyword discovery",
+      "tools": [
+        {"name": "search", "description": "Search the web and return titles, URLs, and snippets"},
+        {"name": "autocomplete", "description": "Get search suggestions for a keyword"}
+      ]
+    }
+  },
+
+  "agent_tools": {
+    "description": "Tools available directly inside Darius (smolagents ToolCallingAgent)",
+    "tools": [
+      {"name": "read_file", "description": "Read file contents from the filesystem (50KB cap)"},
+      {"name": "write_file", "description": "Write content to a file, creating directories as needed"},
+      {"name": "list_dir", "description": "List files and directories at a given path"},
+      {"name": "shell", "description": "Run a shell command (60s timeout, destructive commands require confirmation)"},
+      {"name": "git", "description": "Run a git command in a repository (push/reset require confirmation)"},
+      {"name": "mcp", "description": "Call any MCP skill via the proxy server"},
+      {"name": "dispatch", "description": "Dispatch a task to a specialist agent (frontend, backend, deploy, etc.)"},
+      {"name": "web_search", "description": "Search the web via private SearXNG instance"},
+      {"name": "plan_task", "description": "Decompose a complex task into a DAG of execution steps"},
+      {"name": "evaluate_output", "description": "Score agent output quality (0-1) with actionable feedback"}
+    ]
+  },
+
+  "integrations": {
+    "description": "Python integration connectors (called directly, not via MCP yet)",
+    "connectors": [
+      {"name": "gmail", "description": "Read/send Gmail via OAuth", "module": "integrations.gmail"},
+      {"name": "google_calendar", "description": "List/create calendar events", "module": "integrations.google_calendar"},
+      {"name": "notion", "description": "Read/update Notion pages", "module": "integrations.notion"},
+      {"name": "gsc", "description": "Google Search Console query performance", "module": "integrations.seo.gsc"},
+      {"name": "serp_tracker", "description": "SERP position tracking via SearXNG", "module": "integrations.seo.serp"},
+      {"name": "keyword_research", "description": "Keyword discovery and competitor analysis", "module": "integrations.seo.keywords"},
+      {"name": "seo_analysis", "description": "SEO analysis — declining pages, FAQ gaps, CTR issues", "module": "integrations.seo.analysis"},
+      {"name": "improvement_loop", "description": "Visual-aware self-improvement pipeline", "module": "orchestrator.improvement_loop"}
+    ]
+  },
+
+  "specialist_agents": {
+    "description": "Agents Darius can dispatch tasks to",
+    "agents": [
+      {"name": "frontend", "url": "http://frontend-agent:8000", "description": "React/Next.js/TypeScript/Tailwind code generation"},
+      {"name": "backend", "url": "http://backend-agent:8000", "description": "FastAPI/Python API endpoints and logic"},
+      {"name": "scaffold", "url": "http://scaffold-agent:8000", "description": "Project bootstrapping and setup"},
+      {"name": "deploy", "url": "http://deploy-agent:8000", "description": "Docker/K8s deployment operations"},
+      {"name": "support", "url": "http://support-agent:8000", "description": "Bug diagnosis and fixes"},
+      {"name": "code", "url": "http://code-agent:8000", "description": "General-purpose code changes"},
+      {"name": "file", "url": "http://file-agent:8000", "description": "File system operations"},
+      {"name": "qa", "url": "http://qa-agent:8000", "description": "Code review and security scanning"},
+      {"name": "sre", "url": "http://sre-agent:8000", "description": "Infrastructure health, monitoring, incident response"},
+      {"name": "dba", "url": "http://dba-agent:8000", "description": "Database health, query optimization, migrations"}
+    ]
+  }
+}

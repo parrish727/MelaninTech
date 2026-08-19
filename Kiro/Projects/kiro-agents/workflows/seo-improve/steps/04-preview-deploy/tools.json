@@ -1,0 +1,6 @@
+{
+  "allowed_tools": ["shell", "gateway", "git"],
+  "agent": "deploy",
+  "approve": true,
+  "depends_on": ["03-generate-fix"]
+}

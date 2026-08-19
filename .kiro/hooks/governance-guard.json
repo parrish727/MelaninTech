@@ -1,0 +1,13 @@
+{
+  "name": "Governance Guardrail Check",
+  "version": "1.0.0",
+  "description": "Enforces governance guardrails on write operations — verifies environment detection and hard constraints before any file modification",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": ["write"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Before executing this write operation, verify the following guardrails:\n\n1. HARD CONSTRAINTS (block if violated):\n   - Is this modifying a file in MelaninDocs/Finance/? (READ-ONLY — block)\n   - Does this introduce secrets/credentials in code? (block)\n   - Does this reference AWS/Azure cloud providers in documentation? (block — we are self-hosted)\n   - Does this use `any` type in TypeScript? (block)\n   - Does this add a non-Anthropic LLM provider for production? (block)\n\n2. SOFT CONSTRAINTS (warn but allow):\n   - Is this modifying production infrastructure files (docker-compose.yml, nginx configs)?\n   - Is this changing authentication or authorization logic?\n   - Is this modifying K8s manifests for client namespaces?\n\nIf no constraints are violated, proceed with the operation. If a hard constraint is violated, DENY the operation and explain why."
+  }
+}

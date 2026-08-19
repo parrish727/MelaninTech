@@ -101,3 +101,55 @@ Report improvements as recommendations, not failures.
 - Flag warnings (non-blocking) separately from failures (blocking)
 - Provide actionable fix suggestions for failures
 - Log improvement suggestions for future sprints, don't block on them
+
+
+## Post-Deployment Verification (After Every Merge)
+
+### Deployment Completeness Check
+After CI passes and merge completes, QA MUST verify:
+
+1. **All branch commits were included in the merge**
+   ```bash
+   # If any commits exist on the branch that aren't on main → ALERT
+   git log main..origin/<branch> --oneline
+   ```
+
+2. **The deployed container has the expected code**
+   ```bash
+   # Frontend: check for feature markers in the JS bundle
+   JSFILE=$(curl -s http://localhost:5173/ | grep -o 'assets/index-[^"]*\.js')
+   curl -s "http://localhost:5173/$JSFILE" | grep -c "<feature_keyword>"
+   # If 0 → deployment is stale. Force pull + recreate.
+   ```
+
+3. **All containers are running post-deploy**
+   ```bash
+   docker compose ps --format "{{.Name}}: {{.Status}}" | grep -v "Up"
+   # Anything not "Up" → needs restart
+   ```
+
+4. **API health + route count hasn't decreased**
+   ```bash
+   curl -s http://localhost:8000/health/deep
+   # Verify status: "healthy" and patient_count > 0
+   ```
+
+### Race Condition: Late Commits After Auto-Merge
+**Critical pattern to detect:**
+- PR passes CI → auto-merge triggers
+- Developer pushes additional commits to the branch AFTER merge
+- Those commits are NOT included in the merge
+- Result: deployed code is missing the latest changes
+
+**Prevention:**
+- After any push to a feature branch, check if the PR is still open
+- If PR was already merged, cherry-pick the new commits onto main
+- Notify via Slack that a post-merge commit was detected
+
+### QA Gate: Before Declaring "Deployed"
+Never declare a feature "deployed" until:
+- [ ] Container running with image built AFTER the merge commit
+- [ ] Frontend bundle contains the feature's UI markers
+- [ ] Backend route count matches expected
+- [ ] Health endpoint returns 200
+- [ ] Feature-specific smoke test passes (endpoint returns data)

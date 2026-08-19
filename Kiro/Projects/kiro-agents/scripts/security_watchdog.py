@@ -24,12 +24,35 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_FILE = BASE_DIR / "logs" / "security_watchdog.log"
 
-ALLOWED_SOCKET_CONTAINERS = {"docker-orchestrator-1", "docker-hud-1", "docker-deploy-agent-1"}
+# Containers that are explicitly permitted to mount /var/run/docker.sock.
+# Each entry is a declared service in docker-compose.yml with a documented reason.
+#
+# To add a new container: confirm it is declared in docker-compose.yml, document
+# the reason inline, then add the container name and restart security-watchdog.
+ALLOWED_SOCKET_CONTAINERS = {
+    "docker-orchestrator-1",       # Core agent router — manages container lifecycle
+    "docker-hud-1",                # HUD backend — reads container stats for dashboard
+    "docker-deploy-agent-1",       # Deploy agent — builds and restarts app containers
+    "docker-sre-agent-1",          # SRE agent — reads container health and logs
+    "docker-security-watchdog-1",  # This process — monitors socket access
+    "docker-nginx-reload-1",       # nginx-reload sidecar — watches container start
+                                   #   events and signals nginx -s reload via docker exec
+    "docker-mcp-gateway-1",        # MCP gateway — Docker tools require socket for container mgmt
+    "kind-cloud-provider",         # Kind K8s — cloud-provider node for cluster networking
+    "orthoflow-watchtower-1",      # OrthoFlow auto-updater — pulls new images and restarts
+}
 SECRET_PATTERNS = ["sk-ant-", "xoxb-", "xapp-", "ghp_", "glpat-", "AKIA"]
 MAX_FAILED_BANS = 20
 
+# Alert cooldown: suppress repeated alerts for the same violation within this window (seconds).
+# Prevents Slack spam when the same known-false-positive fires every check cycle.
+ALERT_COOLDOWN_SECONDS = 900  # 15 minutes
+
 SLACK_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL_ID", "")
+
+# Tracks last alert time per violation string for deduplication
+_alert_history: dict[str, float] = {}
 
 
 def log(msg: str):
@@ -131,14 +154,28 @@ def main():
         violations = run_checks()
 
         if violations:
-            log(f"🚨 {len(violations)} violation(s) detected")
-            for v in violations:
-                log(f"   • {v}")
+            now = time.time()
+            # Filter out violations that were already alerted within the cooldown window
+            new_violations = [
+                v for v in violations
+                if now - _alert_history.get(v, 0) > ALERT_COOLDOWN_SECONDS
+            ]
 
-            # Alert Slack — do NOT auto-wipe, wait for human approval
-            slack_alert(violations)
-            # The kill switch is engaged via Slack button callback in the orchestrator
-            # This watchdog only detects and alerts — never acts without approval
+            if new_violations:
+                log(f"🚨 {len(new_violations)} violation(s) detected")
+                for v in new_violations:
+                    log(f"   • {v}")
+
+                # Alert Slack — do NOT auto-wipe, wait for human approval
+                slack_alert(new_violations)
+                # The kill switch is engaged via Slack button callback in the orchestrator
+                # This watchdog only detects and alerts — never acts without approval
+
+                # Update cooldown history
+                for v in new_violations:
+                    _alert_history[v] = now
+            elif not daemon:
+                log(f"⏸️  {len(violations)} violation(s) suppressed (within cooldown)")
         else:
             if not daemon:
                 log("✅ Security check passed — no violations")

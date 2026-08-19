@@ -4,15 +4,17 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 
 _conn = None
+_schema_initialized = False
 
 MAX_ATTEMPTS = 9
 
 
 def _get_conn():
-    global _conn
+    global _conn, _schema_initialized
     if _conn is None or _conn.closed:
         _conn = psycopg2.connect(os.environ["POSTGRES_DSN"])
         _conn.autocommit = False
+        _schema_initialized = False
     # if connection is in a bad state, reset it
     if _conn.status == psycopg2.extensions.STATUS_IN_TRANSACTION:
         try:
@@ -20,35 +22,38 @@ def _get_conn():
         except Exception:
             _conn = psycopg2.connect(os.environ["POSTGRES_DSN"])
             _conn.autocommit = False
-    with _conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS tickets (
-                id SERIAL PRIMARY KEY,
-                client TEXT NOT NULL,
-                agent TEXT,
-                task TEXT NOT NULL,
-                proposal TEXT,
-                status TEXT DEFAULT 'open',
-                type TEXT DEFAULT 'client',
-                priority TEXT DEFAULT 'normal',
-                callback_id TEXT UNIQUE,
-                attempts INT DEFAULT 0,
-                last_heartbeat TIMESTAMPTZ,
-                log TEXT,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-        for col, definition in [
-            ("priority", "TEXT DEFAULT 'normal'"),
-            ("attempts", "INT DEFAULT 0"),
-            ("last_heartbeat", "TIMESTAMPTZ"),
-            ("log", "TEXT"),
-        ]:
-            cur.execute(f"""
-                ALTER TABLE tickets ADD COLUMN IF NOT EXISTS {col} {definition}
+            _schema_initialized = False
+    if not _schema_initialized:
+        with _conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tickets (
+                    id SERIAL PRIMARY KEY,
+                    client TEXT NOT NULL,
+                    agent TEXT,
+                    task TEXT NOT NULL,
+                    proposal TEXT,
+                    status TEXT DEFAULT 'open',
+                    type TEXT DEFAULT 'client',
+                    priority TEXT DEFAULT 'normal',
+                    callback_id TEXT UNIQUE,
+                    attempts INT DEFAULT 0,
+                    last_heartbeat TIMESTAMPTZ,
+                    log TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
             """)
-    _conn.commit()
+            for col, definition in [
+                ("priority", "TEXT DEFAULT 'normal'"),
+                ("attempts", "INT DEFAULT 0"),
+                ("last_heartbeat", "TIMESTAMPTZ"),
+                ("log", "TEXT"),
+            ]:
+                cur.execute(f"""
+                    ALTER TABLE tickets ADD COLUMN IF NOT EXISTS {col} {definition}
+                """)
+        _conn.commit()
+        _schema_initialized = True
     return _conn
 
 

@@ -1,0 +1,12 @@
+{
+  "name": "Environment Verification",
+  "version": "1.0.0",
+  "description": "Verifies all required tools and services are available when development tasks begin",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "echo '=== Environment Verification ===' && echo -n 'Node.js: ' && node --version 2>/dev/null || echo 'NOT FOUND' && echo -n 'Python: ' && python3 --version 2>/dev/null || echo 'NOT FOUND' && echo -n 'Docker: ' && docker --version 2>/dev/null || echo 'NOT FOUND' && echo -n 'kubectl: ' && kubectl version --client --short 2>/dev/null || echo 'NOT FOUND' && echo -n 'ruff: ' && ruff --version 2>/dev/null || echo 'NOT FOUND' && echo -n 'Ollama: ' && curl -s http://localhost:11434/api/tags > /dev/null 2>&1 && echo 'Running' || echo 'NOT RUNNING' && echo -n 'PostgreSQL: ' && docker exec -it $(docker ps -q --filter name=postgres) pg_isready 2>/dev/null || echo 'NOT RUNNING' && echo '=== Done ==='"
+  }
+}

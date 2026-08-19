@@ -45,18 +45,38 @@ def request_approval(app, channel: str, task: str, proposal: dict, callback_id: 
         ticket_type=proposal.get("_ticket_type", "client"),
     )
     proposal["_ticket_id"] = ticket_id
+
+    # ── Build the approval message with hard character limits ─────────────────
+    # Slack mrkdwn text blocks have a 3001 char limit. We cap at 2800 for safety.
+    MAX_BLOCK_TEXT = 2800
+    proposal_text = proposal["args"]["proposal"]
+    task_preview = task[:150] + ("…" if len(task) > 150 else "")
+
+    # Format the summary block — always fits within limits
+    summary_text = (
+        f"🎫 *Ticket #{ticket_id}*\n"
+        f"*Agent:* {proposal['agent']}  |  *Model:* `{proposal.get('model', 'unknown')}`\n"
+        f"*Project:* `{proposal['args'].get('project', 'N/A')}`\n"
+        f"*Task:* {task_preview}"
+    )
+
+    # Proposal preview — truncate to fit within block limit
+    remaining_chars = MAX_BLOCK_TEXT - len(summary_text) - 30  # 30 chars for formatting overhead
+    if len(proposal_text) > remaining_chars:
+        proposal_preview = proposal_text[:remaining_chars - 50] + "\n\n_…continued in thread_"
+    else:
+        proposal_preview = proposal_text
+
+    main_block_text = f"{summary_text}\n\n*Proposal:*\n```{proposal_preview}```"
+
+    # Final safety check — if still over limit, aggressively truncate
+    if len(main_block_text) > MAX_BLOCK_TEXT:
+        main_block_text = main_block_text[:MAX_BLOCK_TEXT - 20] + "```\n_…truncated_"
+
     blocks = [
         {
             "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f"*Agent:* {proposal['agent']}  |  *Model:* `{proposal.get('model', 'unknown')}`\n"
-                    f"*Task:* {proposal['args']['task'][:200]}\n"
-                    f"*Project Path:* `{proposal['args'].get('project_path', 'N/A')}`\n\n"
-                    f"*Proposal:*\n```{proposal['args']['proposal'][:800]}```"
-                ),
-            },
+            "text": {"type": "mrkdwn", "text": main_block_text},
         },
     ]
 
@@ -65,7 +85,7 @@ def request_approval(app, channel: str, task: str, proposal: dict, callback_id: 
         blocks.append(ctx)
 
     # Generate HTML preview if proposal contains one
-    preview_url = _save_preview(ticket_id, proposal["args"]["proposal"])
+    preview_url = _save_preview(ticket_id, proposal_text)
     if preview_url:
         blocks.append({
             "type": "section",
@@ -99,17 +119,54 @@ def request_approval(app, channel: str, task: str, proposal: dict, callback_id: 
         ],
     })
 
-    try:
-        app.client.chat_postMessage(
-            channel=channel,
-            text=f"*{proposal['description']}*",
-            blocks=blocks,
-        )
-    except Exception as e:
-        # Auto-cancel the ticket so it can be re-submitted cleanly
-        update_ticket(callback_id, status="cancelled")
-        pending_approvals.pop(callback_id, None)
-        raise RuntimeError(f"Failed to post approval to Slack (ticket auto-cancelled): {e}") from e
+    # ── Post to Slack with retry logic ────────────────────────────────────────
+    import time
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            result = app.client.chat_postMessage(
+                channel=channel,
+                text=f"🎫 Ticket #{ticket_id} — {proposal['description']}",
+                blocks=blocks,
+            )
+            # If proposal was truncated, post the full text in a thread
+            if len(proposal_text) > remaining_chars:
+                try:
+                    ts = result["ts"]
+                    # Split full proposal into 2900-char chunks for thread
+                    full_text = f"*Full Proposal — Ticket #{ticket_id}*\n\n{proposal_text}"
+                    chunks = [full_text[i:i+2900] for i in range(0, len(full_text), 2900)]
+                    for chunk in chunks:
+                        app.client.chat_postMessage(
+                            channel=channel,
+                            thread_ts=ts,
+                            text=chunk,
+                        )
+                except Exception:
+                    pass  # Thread post is best-effort
+            return  # Success — exit
+
+        except Exception as e:
+            error_str = str(e)
+            # If it's a character limit error, truncate more aggressively and retry
+            if "3001 characters" in error_str or "invalid_blocks" in error_str:
+                # Emergency truncation — just show summary + first 500 chars
+                blocks[0]["text"]["text"] = (
+                    f"{summary_text}\n\n"
+                    f"*Proposal:* _(full text in thread)_\n"
+                    f"```{proposal_text[:500]}…```"
+                )
+                continue
+            # DNS/network errors — retry with backoff
+            if "Name or service not known" in error_str or "Connection" in error_str:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+            # Unknown error on last attempt — cancel
+            if attempt == max_retries - 1:
+                update_ticket(callback_id, status="cancelled")
+                pending_approvals.pop(callback_id, None)
+                raise RuntimeError(f"Failed to post approval to Slack after {max_retries} attempts (ticket cancelled): {e}") from e
 
 
 def open_modify_modal(app, trigger_id: str, callback_id: str):
@@ -432,10 +489,21 @@ def execute_proposal(proposal: dict) -> str:
                     rm=True,
                     forcerm=True,
                 )
-                # Stop and remove existing container
+                # Stop and remove existing container (requires owner approval)
                 try:
                     old = client.containers.get(f"docker-{service}-1")
                     old.stop(timeout=10)
+                    if callback_id:
+                        heartbeat(callback_id, f"requesting approval to remove docker-{service}-1")
+                    from agents.deploy_agent import _request_destructive_approval
+                    approved = _request_destructive_approval(
+                        operation="docker rm",
+                        target=f"docker-{service}-1",
+                        context=f"Rebuilding {service} — old container must be removed to start new one",
+                    )
+                    if not approved:
+                        old.start()
+                        return f"⚠️ Container removal denied by owner. Old container restarted. Deploy aborted."
                     old.remove()
                 except Exception:
                     pass

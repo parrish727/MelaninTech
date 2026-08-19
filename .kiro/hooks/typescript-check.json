@@ -1,0 +1,13 @@
+{
+  "name": "TypeScript Type Check on Save",
+  "version": "1.0.0",
+  "description": "Runs TypeScript type checking on .ts/.tsx file saves to enforce strict mode compliance",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["**/*.ts", "**/*.tsx"]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "npx tsc --noEmit --pretty 2>&1 | head -20"
+  }
+}

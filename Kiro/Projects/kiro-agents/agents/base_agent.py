@@ -10,6 +10,9 @@ _PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")
 _PROJECTS_BASE = os.environ.get("PROJECTS_BASE", "/app/Projects")
 _SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 
+# Enterprise AI Agent Framework — Steering Loader
+from agents.steering_loader import load_agent_steering, load_shared_steering
+
 # --- Skill Loader ---
 def load_skill(skill_name: str) -> str:
     """Load a skill.md file and return its content as a system prompt.
@@ -88,6 +91,39 @@ def _guard_proposal(text: str):
     for pattern in _BLOCKED_PATTERNS:
         if pattern.lower() in text.lower():
             raise ValueError(f"Blocked pattern detected in proposal: '{pattern}'")
+
+
+_MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "25.00"))
+_CREDIT_GUARD_THRESHOLD = 0.95  # Block at 95% to prevent exhaustion
+
+
+def _guard_credit_balance():
+    """Pre-flight credit check. Raises if monthly spend is at 95%+ of budget.
+    This prevents credit-exhaustion errors from reaching the LLM API and counting as SLO failures.
+    """
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro"))
+        cur = conn.cursor()
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM llm_traces WHERE created_at > date_trunc('month', NOW())")
+        spent = float(cur.fetchone()[0])
+        conn.close()
+
+        if spent >= _MONTHLY_BUDGET_USD * _CREDIT_GUARD_THRESHOLD:
+            raise CreditExhaustedError(
+                f"Monthly LLM budget nearly exhausted: ${spent:.2f} / ${_MONTHLY_BUDGET_USD:.2f} "
+                f"({spent/_MONTHLY_BUDGET_USD*100:.0f}%). Blocking call to preserve availability. "
+                f"Increase LLM_MONTHLY_BUDGET_USD or wait for next billing cycle."
+            )
+    except CreditExhaustedError:
+        raise
+    except Exception:
+        pass  # If DB is unreachable, allow the call through — fail open
+
+
+class CreditExhaustedError(Exception):
+    """Raised when monthly credit budget is nearly exhausted."""
+    pass
 
 
 _MCP_URL = os.environ.get("MCP_URL", "http://mcp-server:9000")
@@ -189,9 +225,14 @@ def select_model(task_text: str) -> str:
         else:
             model = os.environ.get("MODEL_DEFAULT", "anthropic/claude-sonnet-4-5")
     else:
-        if any(k in task_lower for k in ["architect", "design", "refactor", "optimize", "review", "analyze"]):
+        # Tiered model selection — matches Darius's routing logic
+        if any(k in task_lower for k in ["architect", "redesign entire", "system design", "migration strategy"]):
             model = "claude-opus-4-6"
-        elif any(k in task_lower for k in ["rename", "move", "delete", "list", "read", "simple", "quick"]):
+        elif any(k in task_lower for k in ["write documentation", "write docs", "marketing", "proposal", "readme", "blog"]):
+            model = "claude-fable-5"
+        elif any(k in task_lower for k in ["refactor", "rewrite", "analyze", "review", "optimize", "implement", "build", "create", "fix", "debug"]):
+            model = "claude-sonnet-5"
+        elif any(k in task_lower for k in ["rename", "move", "delete", "list", "read", "simple", "quick", "check", "status"]):
             model = "claude-haiku-4-5-20251001"
         else:
             model = "claude-sonnet-4-6"
@@ -201,11 +242,15 @@ def select_model(task_text: str) -> str:
 
 def _log_usage(agent: str, model: str, project: str, input_tokens: int, output_tokens: int):
     """Log LLM usage to database for cost tracking."""
-    # Cost per 1M tokens (approximate)
+    # Cost per 1M tokens (approximate — check Anthropic pricing page for latest)
     costs = {
-        "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
-        "claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25},
         "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+        "claude-opus-4-7": {"input": 15.0, "output": 75.0},
+        "claude-opus-4-8": {"input": 15.0, "output": 75.0},
+        "claude-sonnet-5": {"input": 3.0, "output": 15.0},
+        "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+        "claude-fable-5": {"input": 3.0, "output": 15.0},
+        "claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25},
     }
     rate = costs.get(model, {"input": 3.0, "output": 15.0})
     cost = (input_tokens * rate["input"] / 1_000_000) + (output_tokens * rate["output"] / 1_000_000)
@@ -222,38 +267,109 @@ def _log_usage(agent: str, model: str, project: str, input_tokens: int, output_t
 
 
 def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 8096) -> str:
+    import time as _t
     # Check Redis cache first
     cached = _cache_get(system_prompt, task_text, model)
     if cached:
+        _log_trace("agent", model, "default", task_text[:100], 0, 0, 0, "success", cached=True)
         return cached
 
-    input_est = len(system_prompt + task_text) // 4  # rough token estimate
-    if _PROVIDER == "openrouter":
-        response = _client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": task_text},
-            ],
-            extra_headers={"X-Title": "Melanin Technologies"},
-        )
-        output = response.choices[0].message.content
-        output_est = len(output) // 4
-        _log_usage("agent", model, "default", input_est, output_est)
-    else:
-        message = _anthropic_client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": task_text}],
-        )
-        output = message.content[0].text
-        _log_usage("agent", model, "default", message.usage.input_tokens, message.usage.output_tokens)
+    # Pre-flight credit guard — prevent credit-exhaustion failures
+    _guard_credit_balance()
+
+    start = _t.time()
+    input_tokens = 0
+    output_tokens = 0
+    error_type = None
+    error_msg = None
+    status = "success"
+
+    try:
+        if _PROVIDER == "openrouter":
+            response = _client.chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": task_text},
+                ],
+                extra_headers={"X-Title": "Melanin Technologies"},
+            )
+            output = response.choices[0].message.content
+            input_tokens = len(system_prompt + task_text) // 4
+            output_tokens = len(output) // 4
+        else:
+            message = _anthropic_client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": task_text}],
+            )
+            output = message.content[0].text
+            input_tokens = message.usage.input_tokens
+            output_tokens = message.usage.output_tokens
+    except CreditExhaustedError as e:
+        latency_ms = int((_t.time() - start) * 1000)
+        # Log as 'credit_guard' — this is a PREVENTED failure, not a system error
+        _log_trace("agent", model, "default", task_text[:100], 0, 0, latency_ms, "credit_guard")
+        # Return a graceful degradation response instead of crashing
+        return f"[Credit budget guard] Unable to process — {str(e)}. Task has been queued for when credits are available."
+    except Exception as e:
+        latency_ms = int((_t.time() - start) * 1000)
+        error_type = type(e).__name__
+        error_msg = str(e)[:500]
+        if "rate_limit" in error_msg.lower():
+            status = "rate_limited"
+        elif "timeout" in error_msg.lower():
+            status = "timeout"
+        elif "credit balance" in error_msg.lower():
+            # Anthropic returned credit exhaustion — log as credit_guard, not error
+            status = "credit_guard"
+            _log_trace("agent", model, "default", task_text[:100], input_tokens, output_tokens, latency_ms, status, error_type=error_type, error_message=error_msg)
+            return f"[Credit exhausted] Anthropic API credits depleted. Contact pktech_dev to top up."
+        else:
+            status = "error"
+        _log_trace("agent", model, "default", task_text[:100], input_tokens, output_tokens, latency_ms, status, error_type=error_type, error_message=error_msg)
+        _log_failure("agent", model, status, error_type, error_msg)
+        raise
+
+    latency_ms = int((_t.time() - start) * 1000)
+    _log_trace("agent", model, "default", task_text[:100], input_tokens, output_tokens, latency_ms, "success")
 
     # Store in Redis (24hr TTL)
     _cache_set(system_prompt, task_text, model, output)
     return output
+
+
+def _log_trace(agent: str, model: str, project: str, task_preview: str, input_tokens: int, output_tokens: int, latency_ms: int, status: str, error_type: str = None, error_message: str = None, cached: bool = False):
+    """Log full LLM trace for observability."""
+    costs = {"claude-opus-4-6": {"input": 15.0, "output": 75.0}, "claude-opus-4-7": {"input": 15.0, "output": 75.0}, "claude-opus-4-8": {"input": 15.0, "output": 75.0}, "claude-sonnet-5": {"input": 3.0, "output": 15.0}, "claude-sonnet-4-6": {"input": 3.0, "output": 15.0}, "claude-fable-5": {"input": 3.0, "output": 15.0}, "claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25}}
+    rate = costs.get(model, {"input": 3.0, "output": 15.0})
+    cost = (input_tokens * rate["input"] / 1_000_000) + (output_tokens * rate["output"] / 1_000_000)
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro"))
+        cur = conn.cursor()
+        cur.execute("INSERT INTO llm_traces (agent, model, project, task_preview, input_tokens, output_tokens, latency_ms, status, error_type, error_message, cost_usd, cached) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (agent, model, project, task_preview, input_tokens, output_tokens, latency_ms, status, error_type, error_message, cost, cached))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _log_failure(agent: str, model: str, failure_type: str, error_code: str, error_message: str):
+    """Log LLM failure for root cause analysis."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro"))
+        cur = conn.cursor()
+        cur.execute("INSERT INTO llm_failures (agent, model, failure_type, error_code, error_message) VALUES (%s,%s,%s,%s,%s)",
+                    (agent, model, failure_type, error_code, error_message[:500] if error_message else None))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def create_app(agent_name: str, system_prompt: str, handle_task_fn):
@@ -261,11 +377,17 @@ def create_app(agent_name: str, system_prompt: str, handle_task_fn):
     system_prompt can be:
       - A string (backward compatible, used as-is)
       - None (will attempt to load from skills/{agent_name}.skill.md)
+
+    The Enterprise AI Agent Framework steering context is automatically
+    appended to provide guardrails, parameters, and environment awareness.
     """
     # Load from skill file if prompt is None or empty
     if not system_prompt:
         skill_name = agent_name.lower().replace("agent", "")
         system_prompt = load_skill(skill_name) or "You are a helpful AI agent."
+
+    # Load Enterprise AI Agent Framework steering context
+    steering_context = load_agent_steering(agent_name)
 
     app = FastAPI()
 
@@ -298,7 +420,14 @@ def create_app(agent_name: str, system_prompt: str, handle_task_fn):
             mcp_context = fetch_mcp_context(agent_name, project)
             # Enforce project isolation on EVERY agent call
             isolation = _ISOLATION_PROMPT.format(project=project)
-            enriched_prompt = f"{system_prompt}\n\n{isolation}\n\n{mcp_context}" if mcp_context else f"{system_prompt}\n\n{isolation}"
+            # Compose full prompt: skill + framework steering + isolation + MCP context
+            prompt_parts = [system_prompt]
+            if steering_context:
+                prompt_parts.append(f"\n\n--- ENTERPRISE AI AGENT FRAMEWORK ---\n\n{steering_context}")
+            prompt_parts.append(isolation)
+            if mcp_context:
+                prompt_parts.append(mcp_context)
+            enriched_prompt = "\n\n".join(prompt_parts)
             proposal_text = _complete(model, enriched_prompt, task_text)
             _guard_proposal(proposal_text)
             project_path = os.path.join(_PROJECTS_BASE, project)

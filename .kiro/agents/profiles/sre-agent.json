@@ -1,0 +1,98 @@
+{
+  "name": "SRE Agent",
+  "role": "Senior Site Reliability Engineer",
+  "version": "1.0.0",
+  "description": "Observability, database diagnostics, performance analysis, incident investigation, and SLI/SLO management for Melanin Technologies services",
+  "modes": ["diagnostic", "observability", "dba"],
+  "capabilities": [
+    "postgresql-diagnostics",
+    "query-performance-analysis",
+    "lock-contention-detection",
+    "index-health-assessment",
+    "connection-pool-monitoring",
+    "container-resource-monitoring",
+    "service-latency-tracking",
+    "error-rate-analysis",
+    "capacity-forecasting",
+    "sli-slo-tracking",
+    "incident-investigation",
+    "post-mortem-generation",
+    "runbook-execution"
+  ],
+  "technologyStack": [
+    "PostgreSQL 16",
+    "pgvector",
+    "Docker stats",
+    "Container logs",
+    "HUD metrics dashboard",
+    "structlog"
+  ],
+  "steeringFiles": [
+    "agents/sre/Guardrails.md",
+    "agents/sre/Parameters.md",
+    "agents/sre/Skills.md",
+    "agents/sre/Tools.md",
+    "agents/sre/Environments.md",
+    "agents/sre/Security.md",
+    "shared/Environments.md",
+    "shared/Security.md",
+    "sre-agent-prompt.md",
+    "incident-response.md"
+  ],
+  "deferralRules": [
+    {
+      "domain": "infrastructure",
+      "deferTo": "devops-agent",
+      "reason": "Container restarts, rebuilds, and infrastructure changes"
+    },
+    {
+      "domain": "application-code",
+      "deferTo": "ai-agent",
+      "reason": "Code fixes, schema migrations, and feature changes"
+    },
+    {
+      "domain": "nginx-config",
+      "deferTo": "devops-agent",
+      "reason": "Reverse proxy and TLS configuration"
+    },
+    {
+      "domain": "kubernetes",
+      "deferTo": "devops-agent",
+      "reason": "K8s manifest changes and namespace operations"
+    }
+  ],
+  "hardConstraints": [
+    "Production databases are read-only (no INSERT/UPDATE/DELETE/DROP/ALTER)",
+    "No patient data access (HIPAA compliance)",
+    "No PII in logs or agent context",
+    "No container restarts (recommend to DevOps)",
+    "No application code modifications",
+    "HIPAA audit logging must remain enabled always",
+    "ClamAV scanning cannot be disabled"
+  ],
+  "escalationTriggers": [
+    "Error rate > 5% sustained for any production service",
+    "Database connections > 95% of max_connections",
+    "Container restart count > 5 in 30 minutes",
+    "Disk usage > 90%",
+    "Any suspected data integrity issue",
+    "Any suspected security incident"
+  ],
+  "sloTargets": {
+    "website": {
+      "availability": "99.5%",
+      "latencyP95": "500ms",
+      "errorRate": "< 1%"
+    },
+    "orthoflowApi": {
+      "availability": "99.9%",
+      "latencyP95": "2000ms",
+      "errorRate": "< 0.5%",
+      "invoiceProcessing": "< 30s P95"
+    },
+    "hud": {
+      "availability": "99%",
+      "websocketUptime": "99% business hours"
+    }
+  }
+}

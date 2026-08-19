@@ -1,0 +1,6 @@
+{
+  "allowed_tools": ["read_file", "mcp"],
+  "agent": "darius",
+  "approve": false,
+  "depends_on": ["01-collect-data"]
+}

@@ -1,0 +1,5 @@
+SELECT content, metadata, 1 - (embedding <=> :query_vec::vector) AS similarity
+FROM agent_memory
+WHERE 1 - (embedding <=> :query_vec::vector) > :threshold
+ORDER BY embedding <=> :query_vec::vector
+LIMIT :limit

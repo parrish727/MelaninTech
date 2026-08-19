@@ -29,9 +29,12 @@ logging.getLogger("litellm").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 
 # ── Cloud Models (Anthropic Claude — production) ──────────────────────────────
-_MODEL_HEAVY = os.environ.get("DARIUS_MODEL_HEAVY", "anthropic/claude-sonnet-4-6")
-_MODEL_DEFAULT = os.environ.get("DARIUS_MODEL", "anthropic/claude-sonnet-4-6")
-_MODEL_LIGHT = os.environ.get("DARIUS_MODEL_LIGHT", "anthropic/claude-haiku-4-5-20251001")
+# Tiered model selection: task complexity → appropriate model
+_MODEL_APEX = os.environ.get("DARIUS_MODEL_APEX", "anthropic/claude-opus-4-6")         # Architecture, complex refactors, system design
+_MODEL_HEAVY = os.environ.get("DARIUS_MODEL_HEAVY", "anthropic/claude-sonnet-5")       # Heavy coding, multi-step implementation
+_MODEL_DEFAULT = os.environ.get("DARIUS_MODEL", "anthropic/claude-sonnet-4-6")         # Standard coding, most agent tasks
+_MODEL_LIGHT = os.environ.get("DARIUS_MODEL_LIGHT", "anthropic/claude-haiku-4-5-20251001")  # Fast: planning, classification, routing
+_MODEL_CREATIVE = os.environ.get("DARIUS_MODEL_CREATIVE", "anthropic/claude-fable-5")  # Narrative: docs, client comms, marketing
 _API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ── Local Models (Ollama — HUD internal testing) ─────────────────────────────
@@ -40,10 +43,23 @@ _LOCAL_MODEL_LIGHT = os.environ.get("DARIUS_LOCAL_LIGHT", "ollama/qwen3:14b")
 _OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://ollama:11434")
 _LOCAL_TIMEOUT = int(os.environ.get("DARIUS_LOCAL_TIMEOUT", "180"))  # 3 min max for local models
 
+# Task classification keywords for model routing
+_APEX_KEYWORDS = [
+    "architect", "redesign entire", "rewrite from scratch", "system design",
+    "migration strategy", "infrastructure overhaul",
+]
 _HEAVY_KEYWORDS = [
-    "refactor", "architect", "redesign", "rewrite", "analyze", "review all",
-    "optimize", "migrate", "implement", "build", "create", "fix", "debug",
-    "components", "pipeline", "system", "integrate",
+    "refactor", "rewrite", "analyze", "review all", "optimize",
+    "implement", "build", "create", "fix", "debug",
+    "components", "pipeline", "integrate", "multi-step",
+]
+_CREATIVE_KEYWORDS = [
+    "write documentation", "write docs", "marketing", "client email",
+    "proposal", "readme", "blog post", "copy", "narrative",
+]
+_LIGHT_KEYWORDS = [
+    "rename", "move", "delete", "list", "read", "simple", "quick",
+    "what is", "check", "status", "summarize",
 ]
 
 
@@ -51,8 +67,12 @@ def _select_model(task: str, model_source: str = None, model_override: str = Non
     """
     Select model based on task complexity, source, and override.
 
-    Args:
-        model_override: "light" forces Haiku/fast, "heavy" forces Sonnet — skips auto-detection
+    Tiers (cloud):
+      apex    → Opus 4.6     — architecture, system design, complex refactors
+      heavy   → Sonnet 5     — heavy coding, multi-step implementation
+      default → Sonnet 4.6   — standard agent tasks
+      light   → Haiku 4.5    — fast classification, planning, routing
+      creative→ Fable 5      — documentation, client comms, narrative
 
     Returns: (model_id, model_label) where model_label is for tracing.
     """
@@ -64,21 +84,33 @@ def _select_model(task: str, model_source: str = None, model_override: str = Non
     elif model_override == "heavy":
         if model_source == "local":
             return _LOCAL_MODEL_HEAVY, "mistral-small:24b"
-        return _MODEL_HEAVY, "claude-sonnet-4-6"
+        return _MODEL_HEAVY, "claude-sonnet-5"
+    elif model_override == "apex":
+        return _MODEL_APEX, "claude-opus-4-6"
+    elif model_override == "creative":
+        return _MODEL_CREATIVE, "claude-fable-5"
 
     # Auto-detect from task keywords
     t = task.lower()
-    is_heavy = any(k in t for k in _HEAVY_KEYWORDS)
 
     if model_source == "local":
+        is_heavy = any(k in t for k in _HEAVY_KEYWORDS + _APEX_KEYWORDS)
         if is_heavy:
             return _LOCAL_MODEL_HEAVY, "mistral-small:24b"
         return _LOCAL_MODEL_LIGHT, "qwen3:14b"
 
-    # Default: Claude
-    if is_heavy:
-        return _MODEL_HEAVY, "claude-sonnet-4-6"
-    return _MODEL_LIGHT, "claude-haiku-4-5"
+    # Cloud tiered selection
+    if any(k in t for k in _APEX_KEYWORDS):
+        return _MODEL_APEX, "claude-opus-4-6"
+    if any(k in t for k in _CREATIVE_KEYWORDS):
+        return _MODEL_CREATIVE, "claude-fable-5"
+    if any(k in t for k in _HEAVY_KEYWORDS):
+        return _MODEL_HEAVY, "claude-sonnet-5"
+    if any(k in t for k in _LIGHT_KEYWORDS):
+        return _MODEL_LIGHT, "claude-haiku-4-5"
+
+    # Default: Sonnet 4.6 (proven workhorse)
+    return _MODEL_DEFAULT, "claude-sonnet-4-6"
 
 
 def _check_ollama_health() -> bool:

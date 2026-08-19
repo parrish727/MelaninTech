@@ -1,0 +1,24 @@
+name: Email Triage
+trigger: email-triage
+description: Read unread emails, classify each, summarize for CEO, label appropriately
+params:
+  max_emails:
+    default: "10"
+    description: Number of unread emails to process
+
+steps:
+  - id: read
+    type: darius
+    task: "Read the last {{max_emails}} unread emails using the integrate tool (connector: gmail, action: gmail_read_inbox). For each email, classify as: Client, Prospect, Vendor, Recruiter, or Spam. Return a concise summary table."
+    approve: false
+
+  - id: report
+    type: approve
+    message: "Email triage complete. Review classifications and approve labeling?"
+    depends_on: read
+
+  - id: label
+    type: darius
+    task: "Label each email based on the approved classifications using the integrate tool (connector: gmail, action: gmail_label)."
+    approve: false
+    depends_on: report

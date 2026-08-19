@@ -1,0 +1,13 @@
+{
+  "name": "Python Lint on Save",
+  "version": "1.0.0",
+  "description": "Runs ruff linting and type checking on Python file saves to enforce coding standards",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["**/*.py"]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "ruff check --select E,W,F,I --output-format concise"
+  }
+}

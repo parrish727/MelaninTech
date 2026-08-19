@@ -1,0 +1,13 @@
+{
+  "name": "Docker Compose Validation",
+  "version": "1.0.0",
+  "description": "Validates Docker Compose configuration on compose file changes",
+  "when": {
+    "type": "fileEdited",
+    "patterns": ["**/docker-compose*.yml", "**/docker-compose*.yaml", "**/Dockerfile*"]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "docker compose -f Kiro/Projects/kiro-agents/docker/docker-compose.yml config --quiet 2>&1 || echo 'Docker Compose validation failed'"
+  }
+}

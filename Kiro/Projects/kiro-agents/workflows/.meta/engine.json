@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "format": "file-tree",
+  "description": "File-tree workflow engine. Workflows are directories with steps, instructions, tools, and output.",
+  "conventions": {
+    "step_naming": "NN-step-name (e.g. 01-implement, 02-qa, 03-deploy)",
+    "instructions": "instructions.md — markdown prompt for the step's agent",
+    "tools": "tools.json — allowed_tools, agent, approve, depends_on",
+    "output": "output/ — per-run results stored as {run_id}.json",
+    "context": "context/past_runs.jsonl — append-only log of past run summaries"
+  },
+  "compatibility": {
+    "legacy_yaml": true,
+    "description": "Legacy templates/*.yaml files are still loaded via adapter. Use migrate_template() to convert."
+  }
+}

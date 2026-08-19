@@ -3,12 +3,18 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
-    wget curl \
+    wget curl gnupg \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
     libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
     libxfixes3 libxrandr2 libgbm1 libasound2 \
     libpango-1.0-0 libcairo2 \
     fonts-liberation fonts-unifont \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js (for Lighthouse CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g lighthouse@12 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir playwright==1.44.0 fastapi uvicorn pillow

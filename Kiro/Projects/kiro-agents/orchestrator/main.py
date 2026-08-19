@@ -27,11 +27,12 @@ def _estimate_eta(task: str) -> str:
 def process_task(task: str, project: str, say, ticket_type: str = "client"):
     callback_id = str(uuid.uuid4())
 
-    # Immediate acknowledgment
+    # Immediate acknowledgment (with DNS retry)
     eta = _estimate_eta(task)
-    app.client.chat_postMessage(
-        channel=SLACK_CHANNEL_ID,
-        text=f"⏳ *Task received* — routing to agent for `{project}`\n*ETA:* {eta}\n> {task[:120]}{'...' if len(task) > 120 else ''}",
+    _slack_post_with_retry(
+        app,
+        SLACK_CHANNEL_ID,
+        f"⏳ *Task received* — routing to agent for `{project}`\n*ETA:* {eta}\n> {task[:120]}{'...' if len(task) > 120 else ''}",
     )
 
     try:
@@ -42,19 +43,30 @@ def process_task(task: str, project: str, say, ticket_type: str = "client"):
     try:
         proposal = route(task, project, callback_id=callback_id)
     except Exception as e:
-        app.client.chat_postMessage(channel=SLACK_CHANNEL_ID, text=f"⚠️ Agent error: {e}")
+        _slack_post_with_retry(app, SLACK_CHANNEL_ID, f"⚠️ Agent error: {e}")
         return
 
     # deploy_complete means the agent already executed — no approval needed
     if proposal.get("action") == "deploy_complete":
-        app.client.chat_postMessage(
-            channel=SLACK_CHANNEL_ID,
-            text=proposal.get("result", "✅ Deploy complete."),
-        )
+        _slack_post_with_retry(app, SLACK_CHANNEL_ID, proposal.get("result", "✅ Deploy complete."))
         return
 
     proposal["_ticket_type"] = ticket_type
     request_approval(app, SLACK_CHANNEL_ID, task, proposal, callback_id)
+
+
+def _slack_post_with_retry(app, channel: str, text: str, max_retries: int = 3):
+    """Post a simple text message to Slack with DNS/network retry."""
+    import time
+    for attempt in range(max_retries):
+        try:
+            app.client.chat_postMessage(channel=channel, text=text)
+            return
+        except Exception as e:
+            if attempt < max_retries - 1 and ("Name or service not known" in str(e) or "Connection" in str(e)):
+                time.sleep(2 ** attempt)
+                continue
+            raise
 
 
 @app.command("/task")
@@ -78,7 +90,37 @@ def _process_task_command(body, say, ticket_type: str):
         project, task = [s.strip() for s in text.split(":", 1)]
     else:
         project, task = "default", text
+
+    # Deduplicate task text — Slack sometimes double-sends or pastes duplicate content
+    task = _deduplicate_task_text(task)
+
     threading.Thread(target=process_task, args=(task, project, say, ticket_type), daemon=True).start()
+
+
+def _deduplicate_task_text(text: str) -> str:
+    """Detect and remove duplicated content in task text.
+    Handles cases where the same bullet list is pasted twice."""
+    lines = text.strip().split("\n")
+    if len(lines) < 4:
+        return text
+
+    # Check if the second half is a repeat of the first half
+    mid = len(lines) // 2
+    first_half = "\n".join(lines[:mid]).strip()
+    second_half = "\n".join(lines[mid:]).strip()
+
+    if first_half == second_half:
+        return first_half
+
+    # Also check if there's a repeated block (e.g. same N lines appear twice)
+    # by looking for the longest repeated prefix
+    for split_point in range(mid - 1, max(2, mid - 5), -1):
+        candidate = "\n".join(lines[:split_point]).strip()
+        remainder = "\n".join(lines[split_point:]).strip()
+        if candidate == remainder:
+            return candidate
+
+    return text
 
 
 @app.command("/tickets")
@@ -125,6 +167,24 @@ def on_approve(ack, body, action, say):
 @app.action("reject")
 def on_reject(ack, body, action, say):
     handle_approval(ack, body, action, say, app)
+
+
+@app.action("destructive_approve")
+def on_destructive_approve(ack, body, action, say):
+    ack()
+    from agents.deploy_agent import handle_destructive_decision
+    approval_id = action["value"]
+    handle_destructive_decision(approval_id, True)
+    say(f"✅ Destructive operation approved (ID: {approval_id})")
+
+
+@app.action("destructive_deny")
+def on_destructive_deny(ack, body, action, say):
+    ack()
+    from agents.deploy_agent import handle_destructive_decision
+    approval_id = action["value"]
+    handle_destructive_decision(approval_id, False)
+    say(f"❌ Destructive operation denied (ID: {approval_id})")
 
 
 @app.action("modify")

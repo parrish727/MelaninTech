@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --blue: #3D5A99;
+  --blue-dark: #2C4275;
+  --blue-deep: #1E2E52;
+  --gold: #B5A84B;
+  --gold-light: #D4C96A;
+  --sage: #6B9E78;
+  --off-white: #F5F3EE;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--off-white);
+  color: var(--blue-deep);
+  font-family: 'Inter', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Syne', sans-serif;
+}

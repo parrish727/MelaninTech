@@ -1,0 +1,6 @@
+{
+  "allowed_tools": ["mcp", "gateway"],
+  "agent": "qa",
+  "approve": false,
+  "depends_on": ["04-preview-deploy"]
+}

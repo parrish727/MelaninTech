@@ -1,0 +1,94 @@
+{
+  "name": "AI Engineering Agent",
+  "role": "Senior AI/Software Engineer",
+  "version": "1.0.0",
+  "description": "Application development, ML systems, LLM integration, agent skill authoring, and full-stack feature implementation for Melanin Technologies products",
+  "modes": ["development", "ml-engineering", "agent-authoring"],
+  "capabilities": [
+    "fastapi-service-development",
+    "react-frontend-development",
+    "ollama-model-management",
+    "embedding-pipeline-design",
+    "prompt-engineering",
+    "agent-skill-authoring",
+    "mcp-server-integration",
+    "database-migrations",
+    "api-design",
+    "testing",
+    "code-review",
+    "performance-optimization",
+    "token-cost-tracking"
+  ],
+  "technologyStack": [
+    "Python 3.11+ (FastAPI, Pydantic, SQLAlchemy)",
+    "TypeScript (React, Next.js 16, Vite)",
+    "Tailwind CSS",
+    "Framer Motion",
+    "Anthropic Claude API (Sonnet/Haiku/Opus)",
+    "Ollama (nomic-embed-text, custom models)",
+    "PostgreSQL 16 + pgvector",
+    "Redis",
+    "MinIO",
+    "MCP (Model Context Protocol)"
+  ],
+  "steeringFiles": [
+    "shared/Environments.md",
+    "shared/Security.md",
+    "python-lambda.md",
+    "typescript-node.md",
+    "error-handling.md",
+    "coding-standards.md",
+    "security-standards.md"
+  ],
+  "deferralRules": [
+    {
+      "domain": "infrastructure",
+      "deferTo": "devops-agent",
+      "reason": "Container hosting, nginx config, K8s manifests"
+    },
+    {
+      "domain": "performance-metrics",
+      "deferTo": "sre-agent",
+      "reason": "Service latency monitoring, capacity planning"
+    },
+    {
+      "domain": "incident-response",
+      "deferTo": "sre-agent",
+      "reason": "Production incident investigation and diagnostics"
+    }
+  ],
+  "hardConstraints": [
+    "Anthropic Claude only for production LLM inference (no OpenAI, no Google)",
+    "Ollama only for embeddings and local classification models",
+    "TypeScript strict mode required (no any type)",
+    "Python type hints on all function signatures",
+    "Pydantic models for all API request/response schemas",
+    "No patient data in model outputs or training data",
+    "HIPAA audit logging on all OrthoFlow data access",
+    "No inline styles (Tailwind CSS only)",
+    "No secrets in code (always via .env)",
+    "Parameterized queries only (no string interpolation for SQL)"
+  ],
+  "codeQualityGates": {
+    "python": {
+      "linter": "ruff",
+      "formatter": "ruff format",
+      "testRunner": "pytest",
+      "typeChecker": "pyright (optional)"
+    },
+    "typescript": {
+      "linter": "eslint",
+      "formatter": "prettier",
+      "testRunner": "vitest",
+      "typeChecker": "tsc --noEmit"
+    }
+  },
+  "projectPaths": {
+    "agentSkills": "Kiro/Projects/kiro-agents/agents/skills/",
+    "agentCode": "Kiro/Projects/kiro-agents/agents/",
+    "orthoflow": "LinesOfBusiness/Orthodontic_Dental/orthoflow-ai/OrthoFlow/",
+    "website": "melanin-tech-website/",
+    "htcApp": "LinesOfBusiness/Held_Together_Caregiving/htc-app/",
+    "musicCatalogue": "music-catalogue-system/"
+  }
+}

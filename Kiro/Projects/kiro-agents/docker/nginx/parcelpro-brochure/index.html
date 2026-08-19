@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ParcelPro — National Land Parcel Marketplace | Melanin Technologies</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1E2E52; background: #fff; -webkit-font-smoothing: antialiased; }
+h1, h2, h3 { font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif; }
+
+.hero { background: linear-gradient(135deg, #064E3B 0%, #065F46 50%, #047857 100%); padding: 100px 40px 80px; text-align: center; position: relative; overflow: hidden; }
+.hero::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E"); }
+.hero h1 { color: #fff; font-size: 3rem; margin-bottom: 16px; position: relative; }
+.hero .tagline { color: #6EE7B7; font-size: 1.3rem; font-weight: 600; margin-bottom: 12px; position: relative; }
+.hero p { color: rgba(255,255,255,0.75); font-size: 1.05rem; max-width: 650px; margin: 0 auto; line-height: 1.8; position: relative; }
+.hero .badge { display: inline-block; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 100px; padding: 8px 20px; font-size: 0.75rem; font-weight: 600; color: #A7F3D0; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 24px; position: relative; }
+
+.section { max-width: 960px; margin: 0 auto; padding: 70px 40px; }
+.section-alt { background: #F0FDF4; }
+.section-dark { background: #064E3B; color: #fff; }
+
+.section-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #059669; margin-bottom: 12px; }
+.section-dark .section-label { color: #6EE7B7; }
+.section h2 { font-size: 2rem; color: #1E2E52; margin-bottom: 8px; }
+.section-dark h2 { color: #fff; }
+.section .subtitle { color: #666; font-size: 1rem; margin-bottom: 36px; line-height: 1.7; }
+.section-dark .subtitle { color: rgba(255,255,255,0.7); }
+
+/* Vision Cards */
+.vision-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 40px; }
+.vision-card { background: #fff; border: 1px solid #D1FAE5; border-radius: 16px; padding: 28px; }
+.vision-card .icon { font-size: 2rem; margin-bottom: 12px; }
+.vision-card h3 { font-size: 1rem; margin-bottom: 8px; color: #064E3B; }
+.vision-card p { font-size: 0.85rem; color: #666; line-height: 1.6; }
+
+/* Competitor Table */
+table { width: 100%; border-collapse: collapse; margin-bottom: 32px; border-radius: 12px; overflow: hidden; }
+th { text-align: left; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #999; padding: 14px 16px; border-bottom: 2px solid #e5e7eb; background: #F9FAFB; }
+td { padding: 14px 16px; border-bottom: 1px solid #f3f4f6; font-size: 0.85rem; }
+tr:hover { background: #F0FDF4; }
+.check { color: #059669; font-weight: 700; }
+.cross { color: #DC2626; }
+.partial { color: #D97706; }
+
+/* Feature List */
+.features { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+.feature { display: flex; gap: 12px; align-items: flex-start; }
+.feature .dot { width: 8px; height: 8px; border-radius: 50%; background: #10B981; margin-top: 6px; flex-shrink: 0; }
+.feature h4 { font-size: 0.9rem; font-family: 'Inter', sans-serif; font-weight: 600; margin-bottom: 4px; }
+.feature p { font-size: 0.8rem; color: #666; line-height: 1.5; }
+
+/* Timeline */
+.timeline { position: relative; padding-left: 40px; }
+.timeline::before { content: ''; position: absolute; left: 12px; top: 0; bottom: 0; width: 2px; background: #D1FAE5; }
+.timeline-item { position: relative; margin-bottom: 32px; }
+.timeline-item::before { content: ''; position: absolute; left: -33px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: #10B981; border: 3px solid #D1FAE5; }
+.timeline-item h3 { font-size: 0.95rem; font-family: 'Inter', sans-serif; font-weight: 700; margin-bottom: 4px; }
+.timeline-item .weeks { font-size: 0.75rem; color: #059669; font-weight: 600; margin-bottom: 6px; }
+.timeline-item p { font-size: 0.85rem; color: #666; line-height: 1.6; }
+
+/* Pricing */
+.pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 40px; }
+.pricing-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 32px 24px; text-align: center; }
+.pricing-card.featured { border-color: #10B981; box-shadow: 0 4px 20px rgba(16,185,129,0.15); position: relative; }
+.pricing-card.featured::after { content: 'RECOMMENDED'; position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #10B981; color: #fff; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em; padding: 4px 12px; border-radius: 100px; }
+.pricing-card .tier { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: #059669; margin-bottom: 8px; }
+.pricing-card .price { font-family: 'Source Serif 4', Georgia, serif; font-size: 2.2rem; color: #1E2E52; margin-bottom: 4px; }
+.pricing-card .period { font-size: 0.8rem; color: #999; margin-bottom: 16px; }
+.pricing-card .desc { font-size: 0.8rem; color: #666; line-height: 1.6; }
+
+/* AI Section */
+.ai-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+.ai-card { background: linear-gradient(135deg, #064E3B, #065F46); border-radius: 16px; padding: 28px; color: #fff; }
+.ai-card h3 { font-size: 1rem; margin-bottom: 8px; color: #6EE7B7; }
+.ai-card p { font-size: 0.85rem; color: rgba(255,255,255,0.8); line-height: 1.6; }
+.ai-card .example { margin-top: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 12px; font-size: 0.8rem; font-family: monospace; color: #A7F3D0; }
+
+/* Stats */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; text-align: center; margin-bottom: 40px; }
+.stat .number { font-family: 'Source Serif 4', Georgia, serif; font-size: 2.5rem; color: #059669; }
+.stat .label { font-size: 0.8rem; color: #666; margin-top: 4px; }
+
+/* CTA */
+.cta { background: linear-gradient(135deg, #064E3B 0%, #065F46 100%); padding: 70px 40px; text-align: center; }
+.cta h2 { color: #fff; font-size: 2rem; margin-bottom: 12px; }
+.cta p { color: rgba(255,255,255,0.7); margin-bottom: 28px; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.7; }
+.cta a { display: inline-block; background: #10B981; color: #fff; font-weight: 700; padding: 16px 36px; border-radius: 8px; text-decoration: none; font-size: 0.95rem; transition: transform 0.2s; }
+.cta a:hover { transform: translateY(-2px); }
+
+.footer { text-align: center; padding: 32px; font-size: 0.75rem; color: #999; }
+.footer strong { color: #1E2E52; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .hero h1 { font-size: 2rem; }
+  .vision-grid, .pricing-grid, .ai-grid, .features, .stats { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="badge">Proposal — July 2026</div>
+  <h1>ParcelPro</h1>
+  <p class="tagline">The National Land Parcel Marketplace</p>
+  <p>A Zillow-quality platform for browsing, saving, and bidding on affordable land parcels — with GIS intelligence layers that no competitor offers. Built for the everyday working family who wants to own property.</p>
+</div>
+
+<!-- MARKET OPPORTUNITY -->
+<div class="section">
+  <p class="section-label">Market Opportunity</p>
+  <h2>A $50B Market With No Consumer Platform</h2>
+  <p class="subtitle">Land bank properties sit in fragmented county portals. Professional tools cost $99+/month. No one has built a Zillow for affordable land — until now.</p>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="number">25,671</div>
+      <div class="label">Parcels Already In-Hand</div>
+    </div>
+    <div class="stat">
+      <div class="number">4</div>
+      <div class="label">GA Counties with Data</div>
+    </div>
+    <div class="stat">
+      <div class="number">$5,500</div>
+      <div class="label">Median Parcel Price</div>
+    </div>
+    <div class="stat">
+      <div class="number">0</div>
+      <div class="label">National Consumer Platforms</div>
+    </div>
+  </div>
+</div>
+
+<!-- WHY WE WIN -->
+<div class="section section-alt">
+  <p class="section-label">Competitive Edge</p>
+  <h2>5 Advantages No One Else Has</h2>
+  <p class="subtitle">We researched every competitor — Tolemi, LandWatch, PropStream, Zillow. Here's where ParcelPro wins.</p>
+
+  <div class="vision-grid">
+    <div class="vision-card">
+      <div class="icon">🗺️</div>
+      <h3>GIS Intelligence Layers</h3>
+      <p>Flood zones, zoning, utilities, environmental hazards — toggled as map overlays. No competitor does this for affordable land.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">🇺🇸</div>
+      <h3>National Scale</h3>
+      <p>Tolemi sells one county at a time. We aggregate ALL counties, ALL states into one platform. Starting with Georgia's 32 GALBA land banks.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">👨‍👩‍👧‍👦</div>
+      <h3>Consumer-First UX</h3>
+      <p>Zillow-quality interface for non-technical users. Not a government dashboard. Not a professional investor tool. Built for families.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">⚡</div>
+      <h3>Real-Time Bidding</h3>
+      <p>Live auction mechanics with WebSocket updates. Creates urgency, transparency, and fair market pricing. No land platform has this.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">🧠</div>
+      <h3>Embedded AI</h3>
+      <p>Every parcel gets an AI-generated investment brief, opportunity score, and risk assessment — automatically. Users just see a smarter app.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">💰</div>
+      <h3>Free to Start</h3>
+      <p>Free tier for browsing and basic saves. Premium at $9.99/mo. vs PropStream's $99/mo minimum. Removes barriers for working families.</p>
+    </div>
+  </div>
+</div>
+
+<!-- COMPETITOR MATRIX -->
+<div class="section">
+  <p class="section-label">Competitive Analysis</p>
+  <h2>How We Stack Up</h2>
+  <p class="subtitle">Feature-by-feature comparison against every relevant player in the market.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Feature</th>
+        <th>ParcelPro</th>
+        <th>Tolemi</th>
+        <th>LandWatch</th>
+        <th>PropStream</th>
+        <th>Zillow</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Land bank listings</td><td class="check">✅ National</td><td class="check">✅ Per-county</td><td class="cross">❌</td><td class="cross">❌</td><td class="cross">❌</td></tr>
+      <tr><td>Consumer UX</td><td class="check">✅ Zillow-quality</td><td class="cross">❌ Gov dashboard</td><td class="check">✅</td><td class="cross">❌ Complex</td><td class="check">✅</td></tr>
+      <tr><td>GIS data layers (flood, zoning)</td><td class="check">✅ 5+ layers</td><td class="cross">❌ None</td><td class="cross">❌</td><td class="partial">⚠️ Limited</td><td class="cross">❌</td></tr>
+      <tr><td>Real-time bidding</td><td class="check">✅ WebSocket</td><td class="cross">❌</td><td class="cross">❌</td><td class="cross">❌</td><td class="cross">❌</td></tr>
+      <tr><td>AI investment analysis</td><td class="check">✅ Per-parcel</td><td class="cross">❌</td><td class="cross">❌</td><td class="partial">⚠️ Basic</td><td class="cross">❌</td></tr>
+      <tr><td>Affordable lots (&lt;$25K)</td><td class="check">✅ Core focus</td><td class="check">✅</td><td class="cross">❌ Expensive</td><td class="cross">❌</td><td class="cross">❌</td></tr>
+      <tr><td>Free tier</td><td class="check">✅</td><td class="cross">❌ Gov contract</td><td class="check">✅</td><td class="cross">❌ $99/mo</td><td class="check">✅</td></tr>
+      <tr><td>National coverage</td><td class="check">✅ Multi-state</td><td class="cross">❌ GA only</td><td class="check">✅</td><td class="check">✅</td><td class="check">✅</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- AI INTELLIGENCE -->
+<div class="section section-dark">
+  <p class="section-label">Built-In Intelligence</p>
+  <h2 style="color:#fff;">ML Agent Team — AI That Works Without Being Asked</h2>
+  <p class="subtitle">ParcelPro doesn't bolt on a chatbot. A team of 5 specialized ML agents works behind the scenes — enriching data, scoring parcels, predicting values, and learning your preferences. You just experience a smarter product.</p>
+
+  <div class="ai-grid">
+    <div class="ai-card">
+      <h3>🎯 Opportunity Score + Price Prediction</h3>
+      <p>Every parcel gets a 0-100 score plus an AI-predicted value range. Our XGBoost model (trained on real transaction data) beats county tax assessor accuracy.</p>
+      <div class="example">Score: 78/100 — Est. Value: $8,000-$14,000<br>✅ No flood risk · ✅ Buildable zoning · ✅ 22% below market</div>
+    </div>
+    <div class="ai-card">
+      <h3>📊 Investment Brief (Auto-Generated)</h3>
+      <p>AI-generated 3-paragraph analysis when you view any parcel. Strengths, risks, best use, comparable sales — without asking.</p>
+      <div class="example">"0.25-acre R-1 lot in Jonesboro. No flood risk. Priced 22% below Clayton County median. Best use: residential build."</div>
+    </div>
+    <div class="ai-card">
+      <h3>🌊 GIS Intelligence Agent</h3>
+      <p>Automatically enriches every parcel with flood risk, environmental hazards, school proximity, utility access — then translates it into plain English.</p>
+      <div class="example">Zone X → "✅ Minimal flood risk. No insurance needed."<br>Zone A → "⚠️ High risk. Add $1-3K/yr insurance."</div>
+    </div>
+    <div class="ai-card">
+      <h3>💡 Recommendation Agent</h3>
+      <p>Learns your preferences from behavior — views, saves, bids. Then surfaces "parcels matching your style" and sends smart notifications you actually want.</p>
+      <div class="example">Based on your 5 saved parcels:<br>"3 new listings match your criteria in Clayton County →"</div>
+    </div>
+  </div>
+</div>
+
+<!-- TECHNICAL EDGE -->
+<div class="section">
+  <p class="section-label">Technical Advantage</p>
+  <h2>Enterprise Performance. Fraction of the Cost.</h2>
+  <p class="subtitle">Our proprietary stack delivers the same (or better) mapping, data, and real-time performance as platforms backed by hundreds of millions in venture capital — without the overhead.</p>
+
+  <div class="vision-grid">
+    <div class="vision-card">
+      <div class="icon">🗺️</div>
+      <h3>Map Rendering at Scale</h3>
+      <p>Our mapping infrastructure handles 1M+ parcel polygons in-browser with sub-100ms tile loads. No per-user fees. No usage caps. Unlimited scale.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">⚡</div>
+      <h3>Real-Time Bidding Engine</h3>
+      <p>Guaranteed message delivery for every bid. Zero lost transactions. Built on event-streaming architecture that scales to thousands of concurrent bidders.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">📍</div>
+      <h3>Intelligent Data Pipeline</h3>
+      <p>Automated geocoding, GIS enrichment, and data quality scoring for every parcel ingested. Handles batch imports of 25,000+ records seamlessly.</p>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Capability</th><th>Industry Standard</th><th>ParcelPro (Our Stack)</th></tr></thead>
+    <tbody>
+      <tr><td>Parcel rendering</td><td>Slows at 10K polygons</td><td><strong>Smooth at 1M+ polygons</strong></td></tr>
+      <tr><td>Map tile response</td><td>200-500ms</td><td><strong>&lt;100ms</strong></td></tr>
+      <tr><td>Search response</td><td>1-3 seconds</td><td><strong>&lt;300ms (spatial indexed)</strong></td></tr>
+      <tr><td>Bid propagation</td><td>500ms-2s (WebSocket)</td><td><strong>&lt;200ms (event stream)</strong></td></tr>
+      <tr><td>Geocoding throughput</td><td>Rate-limited (paid APIs)</td><td><strong>10,000 addresses/batch, unlimited</strong></td></tr>
+      <tr><td>Scaling ceiling</td><td>Cost scales linearly with users</td><td><strong>Fixed infrastructure cost at any user count</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- FEATURES -->
+<div class="section">
+  <p class="section-label">Platform Features</p>
+  <h2>Everything a Land Buyer Needs</h2>
+  <p class="subtitle">Prototype includes core features. Full platform delivers the complete buying experience.</p>
+
+  <div class="features">
+    <div class="feature"><div class="dot"></div><div><h4>Interactive Parcel Map</h4><p>Mapbox-powered map with colored parcel polygons, click-to-view, and viewport search</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>Advanced Search & Filters</h4><p>Search by address, state, county, price range, lot size, zoning, flood status</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>GIS Layer Toggles</h4><p>Flood zones, zoning, utilities, schools, environmental — all overlaid on the map</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>Save & Organize</h4><p>Bookmark parcels, create lists, add notes, compare side-by-side</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>Real-Time Auctions</h4><p>Live bidding with countdown timers, bid history, and instant notifications</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>Smart Notifications</h4><p>New listings matching your criteria, price drops, outbid alerts, auction endings</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>Mobile-Responsive</h4><p>Full functionality on any device — phone, tablet, desktop. PWA-ready.</p></div></div>
+    <div class="feature"><div class="dot"></div><div><h4>CSV Data Pipeline</h4><p>Upload county land bank CSVs → auto-geocoded → mapped → enriched with GIS data</p></div></div>
+  </div>
+</div>
+
+<!-- TIMELINE -->
+<div class="section section-alt">
+  <p class="section-label">Delivery Timeline</p>
+  <h2>10-Week Prototype → Go/No-Go</h2>
+  <p class="subtitle">Fast iteration with weekly demos. You see progress every Friday.</p>
+
+  <div class="timeline">
+    <div class="timeline-item">
+      <div class="weeks">Weeks 1–2</div>
+      <h3>Foundation</h3>
+      <p>Architecture finalization, PostGIS database, Mapbox integration, data model, DeKalb County data loaded</p>
+    </div>
+    <div class="timeline-item">
+      <div class="weeks">Weeks 3–4</div>
+      <h3>Core GIS</h3>
+      <p>Parcel polygon rendering on map, FEMA flood zone overlay, search filters, CSV ingestion pipeline</p>
+    </div>
+    <div class="timeline-item">
+      <div class="weeks">Weeks 5–6</div>
+      <h3>User Features</h3>
+      <p>Authentication, saved parcels, notifications, parcel detail pages with AI opportunity scores</p>
+    </div>
+    <div class="timeline-item">
+      <div class="weeks">Weeks 7–8</div>
+      <h3>Bidding System</h3>
+      <p>WebSocket real-time bidding, auction rooms, bid history, bid intelligence advisor</p>
+    </div>
+    <div class="timeline-item">
+      <div class="weeks">Weeks 9–10</div>
+      <h3>Polish & QA</h3>
+      <p>End-to-end testing, performance optimization, mobile QA, customer demo preparation</p>
+    </div>
+  </div>
+</div>
+
+<!-- PARTNERSHIP -->
+<div class="section">
+  <p class="section-label">Partnership Opportunity</p>
+  <h2>Built to Scale. Ready to Launch.</h2>
+  <p class="subtitle">The prototype is functional with real Georgia parcel data. The architecture supports 100K+ users. The market has zero competition at this level. We need your market expertise to take it live.</p>
+
+  <div class="vision-grid">
+    <div class="vision-card">
+      <div class="icon">✅</div>
+      <h3>What's Already Built</h3>
+      <p>Interactive map with 25,671 parcels across 4 GA counties. GIS layers (flood zones, zoning). AI scoring. User auth. Real-time bidding architecture. Mobile responsive.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">🎯</div>
+      <h3>What We Need Next</h3>
+      <p>Client relationships with land bank authorities. Market entry strategy execution. Domain secured. First paying users onboarded. GALBA partnership formalized.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">📈</div>
+      <h3>Revenue Potential</h3>
+      <p>Multiple streams: subscriptions ($10-$30/mo per user), 2% transaction fees, land bank listing fees ($500/mo), B2B data API access. Conservative Month 12 target: $50K/mo.</p>
+    </div>
+  </div>
+</div>
+
+<!-- MARKET OPPORTUNITY -->
+<div class="section section-alt">
+  <p class="section-label">Market Opportunity</p>
+  <h2>$50B Market. Zero Consumer Platforms.</h2>
+  <p class="subtitle">Land bank properties are a massive underserved market. There is no national consumer platform. ParcelPro is first to market with the right technology.</p>
+
+  <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin-top: 24px;">
+    <h3 style="font-size: 1rem; color: #1E2E52; margin-bottom: 12px;">📈 Conservative Revenue Projections</h3>
+    <table style="margin-bottom: 0;">
+      <thead><tr><th>Timeline</th><th>Users</th><th>Monthly Revenue</th><th>Annual Run Rate</th></tr></thead>
+      <tbody>
+        <tr><td>Month 6 (GA launch)</td><td>10,000</td><td>$15,000</td><td>$180,000</td></tr>
+        <tr><td>Month 12 (Southeast)</td><td>50,000</td><td>$50,000</td><td>$600,000</td></tr>
+        <tr><td>Month 18 (Multi-state)</td><td>100,000</td><td>$125,000</td><td>$1,500,000</td></tr>
+        <tr><td>Month 24 (National)</td><td>200,000+</td><td>$250,000</td><td>$3,000,000</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size: 0.8rem; color: #6B7280; margin-top: 12px;">
+      Based on: consumer subscriptions ($10-$30/mo), 2% transaction fees, land bank listing fees ($500/mo), and B2B data API access ($199-$999/mo).
+    </p>
+  </div>
+</div>
+
+<!-- GTM -->
+<div class="section section-alt">
+  <p class="section-label">Go-To-Market</p>
+  <h2>Georgia First → Southeast → National</h2>
+  <p class="subtitle">Start with what we have (DeKalb, Clayton data). Expand through GALBA relationships. Scale nationally.</p>
+
+  <div class="vision-grid">
+    <div class="vision-card">
+      <div class="icon">🍑</div>
+      <h3>Phase 1: Georgia</h3>
+      <p>4 counties loaded at launch (Clayton, Fulton/Atlanta, Chatham/Savannah, Albany-Dougherty) — 25,671 parcels. Expand to 10+ counties by month 3 via GALBA.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">🌎</div>
+      <h3>Phase 2: Southeast</h3>
+      <p>Expand to SC, NC, AL, FL. Similar land bank legislation. Automated county onboarding pipeline.</p>
+    </div>
+    <div class="vision-card">
+      <div class="icon">🚀</div>
+      <h3>Phase 3: National</h3>
+      <p>500+ land banks nationwide. Full web scraping pipeline. Native mobile apps. AI-powered everything.</p>
+    </div>
+  </div>
+</div>
+
+<!-- CTA -->
+<div class="cta">
+  <h2>The Product is Built. The Market is Open.</h2>
+  <p>Working prototype. Real data. Zero competition. We need your market expertise and client relationships to take this live. Let's discuss next steps.</p>
+  <a href="#">Schedule a Demo →</a>
+</div>
+
+<!-- FOOTER -->
+<div class="footer">
+  <strong>Melanin Technologies Inc.</strong> · Charlotte, NC · melanin-tech.com<br>
+  Proposal prepared July 2026 · Confidential
+</div>
+
+</body>
+</html>

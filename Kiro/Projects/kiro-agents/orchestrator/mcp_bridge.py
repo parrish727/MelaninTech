@@ -14,6 +14,7 @@ _SIDECARS = {
     "postgres": ("http://mcp-postgres:9011", "message"),
     "figma":    ("http://mcp-figma:9012", "message"),
     "fetch":    ("http://mcp-fetch:9013", "message"),
+    "gateway":  ("http://mcp-gateway:9014", "rpc"),
 }
 
 _id = 0

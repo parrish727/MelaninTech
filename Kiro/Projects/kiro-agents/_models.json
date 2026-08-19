@@ -1,0 +1,127 @@
+{
+  "$schema": "melanin-tech://model-router/v1",
+  "version": "1.0.0",
+  "lastUpdated": "2026-07-17",
+  "description": "Model routing configuration. Determines which LLM handles which task type.",
+
+  "providers": {
+    "anthropic": {
+      "type": "api",
+      "base_url": "https://api.anthropic.com",
+      "auth_env": "ANTHROPIC_API_KEY",
+      "models": {
+        "opus": "claude-opus-4-6",
+        "sonnet": "claude-sonnet-4-6",
+        "haiku": "claude-haiku-4-5-20251001"
+      }
+    },
+    "ollama": {
+      "type": "local",
+      "base_url": "http://ollama:11434",
+      "models": {
+        "embed": "nomic-embed-text",
+        "classify": "llama3:8b"
+      }
+    },
+    "darius-local": {
+      "type": "local",
+      "base_url": "http://ollama:11434",
+      "status": "future",
+      "description": "Self-hosted fine-tuned Darius model (training in progress)",
+      "models": {
+        "darius-v1": "darius:latest"
+      }
+    }
+  },
+
+  "routing_rules": [
+    {
+      "name": "heavy_reasoning",
+      "description": "Complex architecture, refactoring, multi-file analysis",
+      "keywords": ["architect", "redesign", "refactor", "rewrite", "analyze", "review all", "optimize", "migrate"],
+      "model": "anthropic/sonnet",
+      "max_tokens": 8192,
+      "temperature": 0.3
+    },
+    {
+      "name": "code_generation",
+      "description": "Standard code generation, feature implementation, bug fixes",
+      "keywords": ["implement", "build", "create", "fix", "debug", "add", "update"],
+      "model": "anthropic/sonnet",
+      "max_tokens": 8192,
+      "temperature": 0.2
+    },
+    {
+      "name": "planning",
+      "description": "Task decomposition, DAG planning, step ordering",
+      "keywords": ["plan", "decompose", "break down", "steps"],
+      "model": "anthropic/sonnet",
+      "max_tokens": 2048,
+      "temperature": 0.1
+    },
+    {
+      "name": "evaluation",
+      "description": "Output quality scoring, pass/fail classification",
+      "keywords": ["evaluate", "score", "review quality"],
+      "model": "anthropic/sonnet",
+      "max_tokens": 1024,
+      "temperature": 0.0
+    },
+    {
+      "name": "classification",
+      "description": "Task routing, intent classification, keyword matching",
+      "keywords": ["classify", "route", "categorize"],
+      "model": "anthropic/haiku",
+      "max_tokens": 256,
+      "temperature": 0.0
+    },
+    {
+      "name": "context_compression",
+      "description": "Summarizing conversation turns, context compression",
+      "keywords": ["summarize", "compress", "condense"],
+      "model": "anthropic/haiku",
+      "max_tokens": 300,
+      "temperature": 0.0
+    },
+    {
+      "name": "embeddings",
+      "description": "Generating vector embeddings for semantic search/RAG",
+      "model": "ollama/embed",
+      "type": "embedding"
+    },
+    {
+      "name": "light_tasks",
+      "description": "Simple lookups, renames, file operations, quick queries",
+      "keywords": ["rename", "move", "delete", "list", "read", "simple", "quick"],
+      "model": "anthropic/haiku",
+      "max_tokens": 4096,
+      "temperature": 0.1
+    }
+  ],
+
+  "defaults": {
+    "model": "anthropic/sonnet",
+    "max_tokens": 8192,
+    "temperature": 0.2,
+    "fallback": "anthropic/haiku"
+  },
+
+  "cost_tracking": {
+    "enabled": true,
+    "table": "llm_traces",
+    "rates_per_million": {
+      "claude-opus-4-6": {"input": 15.0, "output": 75.0},
+      "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+      "claude-haiku-4-5-20251001": {"input": 0.25, "output": 1.25},
+      "nomic-embed-text": {"input": 0.0, "output": 0.0}
+    }
+  },
+
+  "future": {
+    "darius_local": {
+      "description": "Once Darius model is trained, swap routing rules to prefer local inference",
+      "strategy": "Start with classification/planning, graduate to code generation as quality improves",
+      "training_data": "darius_traces table (approved outputs only)"
+    }
+  }
+}

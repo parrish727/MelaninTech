@@ -1,0 +1,25 @@
+{
+  "name": "Sync Documentation on Infrastructure Change",
+  "version": "2.0.0",
+  "description": "Automatically updates architecture docs, MelaninDocs (Glossary, Architecture, Onboarding), and ai-sre runbooks when infrastructure, agent, steering, or documentation files change",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/docker-compose.yml",
+      "**/Dockerfile*",
+      "**/k8s/**/*.yaml",
+      "**/orchestrator/**/*.py",
+      "**/agents/**/*.py",
+      "**/AI/darius/**/*.py",
+      "**/config/settings.py",
+      "**/.kiro/steering/**/*.md",
+      "**/hud/backend/main.py",
+      "**/scripts/security_watchdog.py",
+      "**/governance/**/*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Infrastructure, agent, or steering files were changed. Determine which documentation needs updating based on what changed, then update ONLY sections that are now factually inaccurate.\n\n## Documents to check (in priority order):\n\n1. **MelaninDocs/Glossary.md** — If a new service, tool, agent, or concept was introduced, add it to the appropriate section table. If an existing entry is now inaccurate (renamed, removed, changed purpose), update or remove it. Keep the 'Last Updated' date current.\n\n2. **MelaninDocs/MultiAgentArchitecture.md** — If agents were added/removed, routing logic changed, memory layer changed, or model selection changed, update the relevant section. Keep the architecture diagram accurate.\n\n3. **MelaninDocs/Onboarding/MelaninTechnologiesInternalOnboarding.md** — Update the 'Internal Systems' table if services were added/removed. Update 'Technology We Use' if the stack changed. Update the 'Last Updated' date. Do NOT touch finance, legal, corporate, or HR sections.\n\n4. **A.I./ai-sre/docs/architecture.md** — Update component/agent list, infra section, SLOs if relevant values changed.\n\n5. **A.I./ai-sre/automation/scripts/health_check.py** — Update service list if agents or MCP sidecars were added/removed.\n\n6. **A.I./ai-sre/observability/runbooks/incident_response.md** — Update agent names and ports if services changed.\n\n7. **Kiro/Projects/kiro-agents/k8s/README.md** — Update port map and image list if services changed.\n\n## Rules (always):\n- Never reference Azure, AWS, or any cloud provider — infrastructure is self-hosted Docker + Kind K8s\n- Only edit sections that are factually wrong after the change\n- Do not add aspirational content — only document what actually exists and runs today\n- MelaninDocs/Finance/ is read-only — NEVER modify files there\n- Match the existing tone, format, and structure of each document\n- Keep 'Last Updated' dates current on docs you modify\n- Glossary entries should be concise (one sentence definitions)\n- When adding Glossary entries, place them in the correct category table"
+  }
+}

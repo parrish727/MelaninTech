@@ -249,10 +249,12 @@ services:
       - "0"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/hud/backend/main.py:/app/main.py:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/governance:/app/governance:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/integrations:/app/integrations:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/MelaninDocs:/app/melanin-docs:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/graphify-out:/app/graphify-out:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/config:/app/config:ro
     depends_on:
       - postgres
       - ollama

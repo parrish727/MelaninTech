@@ -154,17 +154,57 @@ def _discover_mcp_tools() -> str:
             tools = r.json()
             if isinstance(tools, list):
                 return ", ".join(t.get("name", t) if isinstance(t, dict) else str(t) for t in tools)
+            if isinstance(tools, dict) and "tools" in tools:
+                return ", ".join(t.get("name", "") for t in tools["tools"])
     except Exception:
         pass
     return "list_files, read_file, recall_memory, project_info, web_fetch, shell_exec, github, postgres_mcp, figma_mcp, fetch_mcp"
 
 
+def _load_registry_descriptions() -> str:
+    """Load tool descriptions from _registry.json for richer LLM context."""
+    import os
+    registry_paths = [
+        "/app/_registry.json",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "_registry.json"),
+    ]
+    for path in registry_paths:
+        try:
+            with open(path) as f:
+                import json as _json
+                registry = _json.load(f)
+            # Build a concise description of all available tools
+            lines = []
+            # MCP sidecars
+            for name, sidecar in registry.get("mcp_sidecars", {}).items():
+                if sidecar.get("status") == "planned":
+                    continue
+                for tool in sidecar.get("tools", []):
+                    lines.append(f"{name}.{tool['name']}: {tool['description']}")
+            # Gateway tools
+            gateway = registry.get("mcp_sidecars", {}).get("slack", {})
+            # Internal tools
+            for name, service in registry.get("internal_tools", {}).items():
+                for tool in service.get("tools", []):
+                    lines.append(f"{name}.{tool['name']}: {tool['description']}")
+            return "\n".join(lines[:40])  # Cap to avoid prompt bloat
+        except Exception:
+            continue
+    return ""
+
+
 _MCP_TOOLS_DESC = _discover_mcp_tools()
+_REGISTRY_DESC = _load_registry_descriptions()
+
+# Build a richer description if registry is available
+_MCP_FULL_DESC = _MCP_TOOLS_DESC
+if _REGISTRY_DESC:
+    _MCP_FULL_DESC = f"Available tools:\n{_REGISTRY_DESC}"
 
 
 class MCPTool(Tool):
     name = "mcp"
-    description = f"Call any MCP skill via the Kiro MCP proxy. Available tools: {_MCP_TOOLS_DESC}."
+    description = f"Call any MCP skill via the Kiro MCP proxy. {_MCP_TOOLS_DESC}."
     inputs = {
         "tool": {"type": "string", "description": "MCP tool name"},
         "args": {"type": "object", "description": "Tool arguments as a dict"},
@@ -183,6 +223,40 @@ class MCPTool(Tool):
             return json.dumps(r.json(), indent=2)[:10000]
         except Exception as e:
             return f"MCP error: {e}"
+
+
+_GATEWAY_URL = os.environ.get("MCP_GATEWAY_URL", "http://mcp-gateway:9014")
+
+
+class GatewayTool(Tool):
+    name = "gateway"
+    description = (
+        "Call Slack, Google, Cloudflare, or Docker tools via the MCP gateway. "
+        "Tools: slack.send_message, slack.read_channel, google.gsc_query, google.gmail_read, "
+        "google.gmail_send, cloudflare.purge_cache, cloudflare.list_dns, cloudflare.update_dns, "
+        "docker.list_containers, docker.restart, docker.logs, docker.build_deploy"
+    )
+    inputs = {
+        "tool": {"type": "string", "description": "Gateway tool name (e.g. 'slack.send_message', 'docker.restart')"},
+        "args": {"type": "object", "description": "Tool arguments as a dict"},
+    }
+    output_type = "string"
+
+    def forward(self, tool: str, args: dict) -> str:
+        import json
+        try:
+            r = httpx.post(
+                f"{_GATEWAY_URL}/rpc",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}},
+                timeout=60,
+            )
+            r.raise_for_status()
+            body = r.json()
+            if "error" in body:
+                return f"Gateway error: {body['error']}"
+            return json.dumps(body.get("result", {}), indent=2)[:10000]
+        except Exception as e:
+            return f"Gateway error: {e}"
 
 
 class AgentDispatchTool(Tool):
@@ -258,4 +332,4 @@ class WebSearchTool(Tool):
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
-ALL_TOOLS = [ReadFileTool(), WriteFileTool(), ListDirTool(), ShellTool(), GitTool(), MCPTool(), AgentDispatchTool(), WebSearchTool()]
+ALL_TOOLS = [ReadFileTool(), WriteFileTool(), ListDirTool(), ShellTool(), GitTool(), MCPTool(), GatewayTool(), AgentDispatchTool(), WebSearchTool()]

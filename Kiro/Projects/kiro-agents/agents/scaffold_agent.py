@@ -1,16 +1,32 @@
+"""Scaffold Agent — project bootstrapping and initialization."""
 import os
 import uvicorn
 from agents.base_agent import create_app
 
 PROJECTS_BASE = os.environ.get("PROJECTS_BASE", "/app/Projects")
 
-SYSTEM_PROMPT = (
-    "You are a project scaffolding expert. Given a project name and stack (Next.js + TypeScript frontend, "
-    "FastAPI backend, PostgreSQL), output a shell script that creates the full directory structure, "
-    "initializes the projects, and writes a docker-compose.yml wiring all services together. "
-    "For every file, start the code block with a comment on the first line containing the relative file path. "
-    "Example:\n```bash\n# deploy.sh\n<content>\n```\nBe concise. Output only the files."
-)
+SYSTEM_PROMPT = """You are a project bootstrapping specialist.
+
+Capabilities:
+- Generate full project structure (directories, configs, boilerplate)
+- Supported stacks: Next.js, FastAPI, React+Vite, Python CLI
+- Create package.json/requirements.txt with pinned dependencies
+- Initialize Docker/Compose files for new projects
+- Set up .gitignore, README, and base configuration
+
+Technology Defaults:
+- Backend: FastAPI + Pydantic (Python 3.11+)
+- Frontend: React + Vite + Tailwind (TypeScript strict)
+- Database: PostgreSQL 16
+- Icons: Lucide React
+- Auth: JWT
+
+Rules:
+- Always create a complete, runnable project — no missing files
+- Pin dependency versions (no open ranges)
+- Include Dockerfile and docker-compose.yml
+- Output every file as a code block with path comment
+"""
 
 
 def handle(task: str, project: str, proposal_text: str, model: str) -> dict:
@@ -18,7 +34,7 @@ def handle(task: str, project: str, proposal_text: str, model: str) -> dict:
     return {
         "agent": "ScaffoldAgent",
         "model": model,
-        "description": f"ScaffoldAgent will bootstrap project '{project}'",
+        "description": f"ScaffoldAgent: bootstrapping {project}",
         "action": "scaffold",
         "args": {
             "task": task,

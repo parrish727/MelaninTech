@@ -1,0 +1,25 @@
+name: New Prospect Response
+trigger: new-prospect
+description: Read prospect inquiry, draft response with discovery call offer, get CEO approval before sending
+params:
+  email_query:
+    default: "is:unread label:inbox"
+    description: Gmail search query for the prospect email
+
+steps:
+  - id: read-email
+    type: darius
+    task: "Read the most recent unread prospect email using the integrate tool (connector: gmail, action: gmail_read_inbox). Summarize who they are, what they need, and their urgency level."
+    approve: false
+
+  - id: draft-response
+    type: darius
+    task: "Draft a professional response using the internal-ops skill. Offer a 30-min discovery call. Include link to melanin-tech.com. Keep it under 150 words."
+    approve: true
+    depends_on: read-email
+
+  - id: send-response
+    type: darius
+    task: "Send the approved response using the integrate tool (connector: gmail, action: gmail_send)."
+    approve: false
+    depends_on: draft-response

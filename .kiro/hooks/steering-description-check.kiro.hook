@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Steering File Description Check",
+  "description": "When a new markdown file is created in .kiro/steering, remind the agent to include the required 'description' field in the YAML front-matter to prevent Kiro validation errors.",
+  "version": "1",
+  "when": {
+    "type": "fileCreated",
+    "patterns": [
+      ".kiro/steering/**/*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A new steering file was just created. Kiro REQUIRES a 'description' field in the YAML front-matter of every steering file. Verify the file has proper front-matter with all required fields. The front-matter MUST include: 1) 'inclusion' (auto, fileMatch, or manual), 2) 'description' (a short sentence explaining what the steering file provides), and 3) 'fileMatchPattern' (required if inclusion is fileMatch). Example:\\n\\n---\\ninclusion: auto\\ndescription: \\\"Short description of what this steering file does.\\\"\\n---\\n\\nIf the description field is missing, add it immediately. Do NOT leave a steering file without a description."
+  }
+}

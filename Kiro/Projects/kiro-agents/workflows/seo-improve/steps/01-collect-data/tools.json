@@ -1,0 +1,6 @@
+{
+  "allowed_tools": ["gateway", "mcp", "read_file"],
+  "agent": "darius",
+  "approve": false,
+  "depends_on": []
+}
