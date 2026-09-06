@@ -219,7 +219,7 @@ def _write_code_blocks(proposal_text: str, project_path: str) -> list[str]:
             continue
         # first line must be a path comment: # some/path or // some/path
         first = lines[0].strip()
-        if first.startswith("#") or first.startswith("//"):
+        if first.startswith(("#", "//")):
             rel_path = first.lstrip("#/").strip()
             content = "\n".join(lines[1:])
         else:
@@ -485,7 +485,7 @@ def execute_proposal(proposal: dict) -> str:
                 # Build the image
                 if callback_id:
                     heartbeat(callback_id, f"building image for {service}")
-                image, logs = client.images.build(
+                _image, _logs = client.images.build(
                     path="/app/melanin-tech-website",
                     tag=f"docker-{service}",
                     rm=True,

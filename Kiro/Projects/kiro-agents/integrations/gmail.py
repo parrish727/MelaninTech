@@ -78,5 +78,5 @@ class GmailConnector(BaseConnector):
 
     def label(self, message_id: str, label: str) -> dict:
         """Add label to message."""
-        r = self._request("POST", f"{self.BASE_URL}/messages/{message_id}/modify", json={"addLabelIds": [label]})
+        self._request("POST", f"{self.BASE_URL}/messages/{message_id}/modify", json={"addLabelIds": [label]})
         return {"id": message_id, "labeled": label}

@@ -258,7 +258,7 @@ def _deploy_service(task: str, project: str, service: str, build_path: str, call
         client = docker_sdk.from_env()
 
         _hb(f"building image for {service} from {build_path}")
-        image, _ = client.images.build(
+        _image, _ = client.images.build(
             path=build_path,
             tag=f"docker-{service}",
             rm=True,

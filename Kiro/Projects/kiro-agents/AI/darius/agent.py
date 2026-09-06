@@ -256,7 +256,6 @@ def run_task(task: str, session_id: str = None, model_source: str = None, model_
         # Single darius step — use the smolagents agent directly (most flexible)
         agent, model_label = build_agent(task, model_source=actual_source, model_override=model_override)
 
-        timeout_limit = _LOCAL_TIMEOUT if actual_source == "local" else 300
 
         for attempt in range(3):
             try:

@@ -44,7 +44,7 @@ def _resolve_ticket_references(task: str) -> str:
     if not refs:
         return task
 
-    ticket_ids = sorted(set(int(t) for t in refs))
+    ticket_ids = sorted({int(t) for t in refs})
     context_parts = []
     try:
         dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
@@ -238,7 +238,7 @@ def _handle_slack_post(task: str, project: str, callback_id: str) -> dict:
         # Look for "and NN" or ", NN" patterns after the first match
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs))
+    ticket_ids = sorted({int(t) for t in ticket_refs})
 
     # Fetch ticket content from DB
     content_parts = []
@@ -314,7 +314,7 @@ def _handle_file_write(task: str, project: str, callback_id: str) -> dict:
     if ticket_refs:
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs))
+    ticket_ids = sorted({int(t) for t in ticket_refs})
 
     # Determine target path from task
     # Look for folder/path references — resolve to actual mounted paths in orchestrator
@@ -425,7 +425,7 @@ def _handle_email(task: str, project: str, callback_id: str) -> dict:
     if ticket_refs:
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs)) if ticket_refs else []
+    ticket_ids = sorted({int(t) for t in ticket_refs}) if ticket_refs else []
 
     body_content = ""
     if ticket_ids:

@@ -210,7 +210,7 @@ def post_weekly_summary(domain: str = "melanin-tech.com") -> bool:
 
     # Build Slack message
     ticketed = [f for f in findings if f["status"] == "ticketed"]
-    informational = [f for f in findings if f["status"] == "acknowledged"]
+    [f for f in findings if f["status"] == "acknowledged"]
 
     sections = []
     sections.append({

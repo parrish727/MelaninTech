@@ -211,7 +211,7 @@ def get_users():
     # TODO: implement this
     pass
 ```"""
-        complete, issues = _check_completeness(output)
+        complete, _issues = _check_completeness(output)
         self.assertFalse(complete)
 
     def test_max_retries_with_slack_notification(self):
@@ -226,7 +226,7 @@ def get_users():
 
         with patch("AI.darius.evaluator.notify_rejection") as mock_notify:
             with patch("AI.darius.evaluator._llm_evaluate", return_value=None):
-                final_output, passed = evaluate_with_retries(
+                _final_output, passed = evaluate_with_retries(
                     task="Build a React component",
                     output="no code here",
                     retry_fn=mock_retry_fn,

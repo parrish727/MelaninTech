@@ -217,7 +217,7 @@ def on_skip_production(ack, body, action):
 def on_kill_switch_approve(ack, body, action):
     ack()
     import subprocess
-    result = subprocess.run(
+    subprocess.run(
         ["python3", "scripts/vault_sync.py", "--lock", "Approved via Slack security alert"],
         capture_output=True, text=True, cwd="/app"
     )

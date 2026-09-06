@@ -275,7 +275,7 @@ def full_health_check() -> dict:
 @app.post("/task")
 def handle_task(body: dict):
     """Handle tasks routed by the orchestrator."""
-    task = body.get("task", "").lower()
+    body.get("task", "").lower()
     project = body.get("project", "default")
 
     # Run full health check

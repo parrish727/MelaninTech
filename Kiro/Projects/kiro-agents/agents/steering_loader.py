@@ -204,7 +204,7 @@ def load_profiles() -> dict[str, dict]:
     for json_file in profiles_dir.glob("*.json"):
         try:
             data = json.loads(json_file.read_text(encoding="utf-8"))
-            name = data.get("name", json_file.stem)
+            data.get("name", json_file.stem)
             profiles[json_file.stem] = data
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load profile {json_file}: {e}")

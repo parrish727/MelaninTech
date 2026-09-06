@@ -22,7 +22,7 @@ PRODUCTION = {"name": "production", "service": "docker-production-server-1", "im
 
 
 def _rebuild(env: dict, client: docker_sdk.DockerClient) -> str:
-    image, _ = client.images.build(
+    _image, _ = client.images.build(
         path=WEBSITE_PATH,
         tag=env["image"],
         rm=True,

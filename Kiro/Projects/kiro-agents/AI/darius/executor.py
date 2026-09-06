@@ -265,7 +265,7 @@ def format_dag_results(results: dict[str, str]) -> str:
     lines = []
     for step_id in sorted(results.keys()):
         result = results[step_id]
-        status = "❌" if result.startswith("ERROR") or result.startswith("[REJECTED") else "✅"
+        status = "❌" if result.startswith(("ERROR", "[REJECTED")) else "✅"
         preview = result[:200].replace("\n", " ")
         lines.append(f"{status} **{step_id}**: {preview}")
     return "\n\n".join(lines)

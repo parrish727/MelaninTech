@@ -214,7 +214,7 @@ def task_auto(body: dict):
 
     task_text = body["task"]
     project = body.get("project", "default")
-    session_id = body.get("session_id", project)
+    body.get("session_id", project)
     classification = classify_task(task_text)
 
     # Fast path: simple questions, status checks, and SRE diagnostics

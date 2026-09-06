@@ -146,7 +146,7 @@ class DriftDetector:
                 continue
 
             # Embed the current output
-            current_embedding = self.sl.embed(output)
+            self.sl.embed(output)
 
             # Search for the baseline
             baseline_results = self.sl.search_with_filter(
