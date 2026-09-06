@@ -1,13 +1,17 @@
-import uuid
 import threading
+import uuid
+
+from config.settings import SLACK_APP_TOKEN, SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
+from orchestrator import watchdog
+from orchestrator.approval import (
+    handle_approval,
+    handle_modify_submit,
+    request_approval,
+)
+from orchestrator.memory import store_conversation
+from orchestrator.router import route
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
-from config.settings import SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_CHANNEL_ID
-from orchestrator.router import route
-from orchestrator.approval import request_approval, handle_approval, handle_modify_submit
-from orchestrator.memory import store_conversation
-from orchestrator import watchdog
 
 app = App(token=SLACK_BOT_TOKEN)
 
@@ -197,8 +201,9 @@ def on_modify(ack, body, action):
 @app.action("deploy_production")
 def on_deploy_production(ack, body, action):
     ack()
-    from orchestrator.deploy_pipeline import deploy_to_production
     import threading
+
+    from orchestrator.deploy_pipeline import deploy_to_production
     threading.Thread(target=deploy_to_production, args=(app,), daemon=True).start()
 
 
@@ -212,7 +217,7 @@ def on_skip_production(ack, body, action):
 def on_kill_switch_approve(ack, body, action):
     ack()
     import subprocess
-    result = subprocess.run(
+    subprocess.run(
         ["python3", "scripts/vault_sync.py", "--lock", "Approved via Slack security alert"],
         capture_output=True, text=True, cwd="/app"
     )

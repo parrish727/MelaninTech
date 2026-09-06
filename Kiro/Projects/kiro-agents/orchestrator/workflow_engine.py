@@ -27,14 +27,15 @@ Key principles:
   4. Output is stored per-run for training data extraction
   5. Existing YAML templates are backward-compatible (loaded via adapter)
 """
-import os
 import json
-import yaml
-import shutil
 import logging
+import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+import yaml
 
 logger = logging.getLogger("workflow_engine")
 

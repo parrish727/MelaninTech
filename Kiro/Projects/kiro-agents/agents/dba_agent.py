@@ -7,12 +7,13 @@ and connection pool monitoring.
 Integrated with the orchestrator as a routable agent.
 Responds to /task with diagnostic reports.
 """
-import os
 import json
-import uvicorn
+import os
+
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import uvicorn
 from fastapi import FastAPI
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
@@ -274,7 +275,7 @@ def full_health_check() -> dict:
 @app.post("/task")
 def handle_task(body: dict):
     """Handle tasks routed by the orchestrator."""
-    task = body.get("task", "").lower()
+    body.get("task", "").lower()
     project = body.get("project", "default")
 
     # Run full health check

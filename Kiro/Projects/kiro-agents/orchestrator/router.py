@@ -1,11 +1,22 @@
 import httpx
 from config.settings import AGENT_URLS
 from orchestrator.contracts import check, consume_ticket
-from orchestrator.template_engine import parse_template_command, load_template, resolve_template, list_templates
+from orchestrator.template_engine import (
+    list_templates,
+    load_template,
+    parse_template_command,
+    resolve_template,
+)
 
 # Initialize distributed tracing
 try:
-    from integrations.tracing import init_tracing, traced, span, get_trace_id, add_span_attributes
+    from integrations.tracing import (
+        add_span_attributes,
+        get_trace_id,
+        init_tracing,
+        span,
+        traced,
+    )
     init_tracing("orchestrator", version="2.0.0")
 except Exception:
     def traced(name=None, attributes=None):
@@ -23,8 +34,9 @@ except Exception:
 def _resolve_ticket_references(task: str) -> str:
     """If the task references another ticket (e.g. 'Ticket #58'), fetch that ticket's
     full task text and prepend it as context so the executing agent has everything it needs."""
-    import re
     import os
+    import re
+
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
@@ -32,7 +44,7 @@ def _resolve_ticket_references(task: str) -> str:
     if not refs:
         return task
 
-    ticket_ids = sorted(set(int(t) for t in refs))
+    ticket_ids = sorted({int(t) for t in refs})
     context_parts = []
     try:
         dsn = os.environ.get("POSTGRES_DSN", "postgresql://kiro:kiro_secret@postgres:5432/kiro")
@@ -131,10 +143,12 @@ def route(task: str, project: str = "default", callback_id: str = None) -> dict:
     return response.json()
 
 
-import re
 import os
+import re
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
 
 def _word_match(keywords: list[str], text: str) -> bool:
     """Match keywords with word boundaries to avoid substring false positives."""
@@ -224,7 +238,7 @@ def _handle_slack_post(task: str, project: str, callback_id: str) -> dict:
         # Look for "and NN" or ", NN" patterns after the first match
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs))
+    ticket_ids = sorted({int(t) for t in ticket_refs})
 
     # Fetch ticket content from DB
     content_parts = []
@@ -252,7 +266,7 @@ def _handle_slack_post(task: str, project: str, callback_id: str) -> dict:
             search_paths = [
                 f"/app/Projects/{project}",
                 "/app/Projects",
-                f"/app/melanin-tech-website",
+                "/app/melanin-tech-website",
             ]
             for base in search_paths:
                 for root, dirs, files in os.walk(base):
@@ -300,7 +314,7 @@ def _handle_file_write(task: str, project: str, callback_id: str) -> dict:
     if ticket_refs:
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs))
+    ticket_ids = sorted({int(t) for t in ticket_refs})
 
     # Determine target path from task
     # Look for folder/path references — resolve to actual mounted paths in orchestrator
@@ -411,7 +425,7 @@ def _handle_email(task: str, project: str, callback_id: str) -> dict:
     if ticket_refs:
         additional = re.findall(r"(?:and|,)\s*#?(\d+)", task.lower())
         ticket_refs.extend(additional)
-    ticket_ids = sorted(set(int(t) for t in ticket_refs)) if ticket_refs else []
+    ticket_ids = sorted({int(t) for t in ticket_refs}) if ticket_refs else []
 
     body_content = ""
     if ticket_ids:

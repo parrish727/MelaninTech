@@ -15,12 +15,14 @@ Task routing:
   - Link structure → SEO agent (frontend)
   - Position analysis → informational only (Slack summary)
 """
-import os
-import uuid
 import json
 import logging
+import os
+import uuid
+
 import httpx
-from integrations.seo.models import get_site, get_findings, update_finding_status
+
+from integrations.seo.models import get_findings, get_site, update_finding_status
 
 logger = logging.getLogger("seo.tickets")
 
@@ -189,8 +191,9 @@ def post_weekly_summary(domain: str = "melanin-tech.com") -> bool:
         return False
 
     # Get all findings from this run (ticketed + acknowledged)
-    from integrations.seo.models import _get_conn
     from psycopg2.extras import RealDictCursor
+
+    from integrations.seo.models import _get_conn
     conn = _get_conn()
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
@@ -207,7 +210,7 @@ def post_weekly_summary(domain: str = "melanin-tech.com") -> bool:
 
     # Build Slack message
     ticketed = [f for f in findings if f["status"] == "ticketed"]
-    informational = [f for f in findings if f["status"] == "acknowledged"]
+    [f for f in findings if f["status"] == "acknowledged"]
 
     sections = []
     sections.append({
@@ -269,11 +272,11 @@ def run_full_pipeline(domain: str = "melanin-tech.com") -> dict:
 
     Returns pipeline execution summary.
     """
-    from integrations.seo.models import register_site
+    from integrations.seo.analysis import SEOAnalysisAgent
     from integrations.seo.gsc import GSCConnector
     from integrations.seo.keywords import KeywordResearcher
+    from integrations.seo.models import register_site
     from integrations.seo.serp import SERPTracker
-    from integrations.seo.analysis import SEOAnalysisAgent
 
     results = {"domain": domain, "steps": {}}
 

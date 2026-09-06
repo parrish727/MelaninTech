@@ -7,11 +7,11 @@ Or standalone: python AI/darius/tests/test_darius_v2.py
 Note: smolagents and litellm are only available inside the Docker container.
 Tests mock these at the module level for local execution.
 """
+import json
 import os
 import sys
-import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Set required env vars before importing modules
 os.environ.setdefault("POSTGRES_DSN", "")
@@ -63,7 +63,7 @@ class TestPlanner(unittest.TestCase):
 
     def test_simple_task_skips_planning(self):
         """Simple tasks should return single step without LLM call."""
-        from AI.darius.planner import plan_task, _is_complex_task
+        from AI.darius.planner import _is_complex_task, plan_task
 
         # Short task — should not be complex
         self.assertFalse(_is_complex_task("fix the login button"))
@@ -211,12 +211,12 @@ def get_users():
     # TODO: implement this
     pass
 ```"""
-        complete, issues = _check_completeness(output)
+        complete, _issues = _check_completeness(output)
         self.assertFalse(complete)
 
     def test_max_retries_with_slack_notification(self):
         """evaluate_with_retries should notify Slack after max failures."""
-        from AI.darius.evaluator import evaluate_with_retries, MAX_RETRIES
+        from AI.darius.evaluator import MAX_RETRIES, evaluate_with_retries
 
         call_count = {"n": 0}
 
@@ -226,7 +226,7 @@ def get_users():
 
         with patch("AI.darius.evaluator.notify_rejection") as mock_notify:
             with patch("AI.darius.evaluator._llm_evaluate", return_value=None):
-                final_output, passed = evaluate_with_retries(
+                _final_output, passed = evaluate_with_retries(
                     task="Build a React component",
                     output="no code here",
                     retry_fn=mock_retry_fn,
@@ -322,8 +322,8 @@ class TestDAGExecutor(unittest.TestCase):
 
     def test_execute_dag_with_mock_agents(self):
         """DAG execution should call agents and collect results."""
-        from AI.darius.executor import execute_dag
         import httpx as _httpx
+        from AI.darius.executor import execute_dag
 
         mock_response = MagicMock()
         mock_response.status_code = 200

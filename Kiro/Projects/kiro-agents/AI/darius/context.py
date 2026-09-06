@@ -16,9 +16,10 @@ Strategy:
 
 Token budget: ~4000 tokens for context, leaving the rest for task + output.
 """
-import os
 import hashlib
 import logging
+import os
+
 from litellm import completion
 
 logger = logging.getLogger("darius.context")
@@ -189,8 +190,8 @@ def maybe_compress(session_id: str):
     Called after each turn is saved.
     """
     from AI.darius.memory import (
-        get_session_turn_count,
         get_last_summary_turn,
+        get_session_turn_count,
         load_session,
         save_context_summary,
     )

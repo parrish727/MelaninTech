@@ -37,14 +37,14 @@ Env vars:
     MELANIN_DOCS_PATH — MelaninDocs root (default: /app/MelaninDocs)
     LOB_PATH — Lines of Business root (default: /app/LinesOfBusiness)
 """
+import argparse
+import hashlib
+import json
+import logging
 import os
 import re
 import sys
-import json
 import time
-import hashlib
-import logging
-import argparse
 from pathlib import Path
 from typing import Optional
 
@@ -86,7 +86,7 @@ class DocumentExtractor:
 
     # ── Document Reading ──────────────────────────────────────────────────────
 
-    def read_document(self, path: Path) -> Optional[str]:
+    def read_document(self, path: Path) -> str | None:
         """Read a document and return plain text content."""
         ext = path.suffix.lower()
 
@@ -101,7 +101,7 @@ class DocumentExtractor:
         else:
             return None
 
-    def _read_text(self, path: Path) -> Optional[str]:
+    def _read_text(self, path: Path) -> str | None:
         """Read plain text/markdown file."""
         try:
             return path.read_text(encoding="utf-8", errors="replace")
@@ -109,7 +109,7 @@ class DocumentExtractor:
             logger.warning(f"Failed to read {path}: {e}")
             return None
 
-    def _read_html(self, path: Path) -> Optional[str]:
+    def _read_html(self, path: Path) -> str | None:
         """Read HTML file, strip tags."""
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
@@ -123,7 +123,7 @@ class DocumentExtractor:
             logger.warning(f"Failed to read HTML {path}: {e}")
             return None
 
-    def _read_pdf(self, path: Path) -> Optional[str]:
+    def _read_pdf(self, path: Path) -> str | None:
         """Read PDF file via PyMuPDF."""
         try:
             import fitz  # PyMuPDF
@@ -140,7 +140,7 @@ class DocumentExtractor:
             logger.warning(f"Failed to read PDF {path}: {e}")
             return None
 
-    def _read_docx(self, path: Path) -> Optional[str]:
+    def _read_docx(self, path: Path) -> str | None:
         """Read DOCX file via python-docx."""
         try:
             from docx import Document

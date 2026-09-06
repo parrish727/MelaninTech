@@ -1,6 +1,7 @@
 import os
 import subprocess
 import time
+
 import uvicorn
 from fastapi import FastAPI
 
@@ -31,8 +32,8 @@ def _request_destructive_approval(operation: str, target: str, context: str = ""
     _pending_destructive_approvals[approval_id] = None  # None = pending
 
     try:
-        from config.settings import SLACK_BOT_TOKEN
         import httpx
+        from config.settings import SLACK_BOT_TOKEN
 
         blocks = [
             {
@@ -124,7 +125,7 @@ def task(body: dict):
         return _deploy_service(task_text, project, service, build_path, callback_id)
 
     # Unknown project — fall back to LLM proposal (human approves before execution)
-    from agents.base_agent import select_model, _complete
+    from agents.base_agent import _complete, select_model
     model = select_model(task_text)
     system_prompt = (
         "You are a senior DevOps engineer. Generate a bash script to deploy the project. "
@@ -152,7 +153,7 @@ def _handle_ci_failure_task(task_text: str, project: str, callback_id: str) -> d
     Reads the specialized skill file, sends the failure context to the LLM,
     and returns a proposal with code blocks for the fix.
     """
-    from agents.base_agent import select_model, _complete, load_skill
+    from agents.base_agent import _complete, load_skill, select_model
 
     # Load the CI diagnosis skill
     ci_skill = load_skill("ci-diagnosis")
@@ -257,7 +258,7 @@ def _deploy_service(task: str, project: str, service: str, build_path: str, call
         client = docker_sdk.from_env()
 
         _hb(f"building image for {service} from {build_path}")
-        image, _ = client.images.build(
+        _image, _ = client.images.build(
             path=build_path,
             tag=f"docker-{service}",
             rm=True,
@@ -282,7 +283,7 @@ def _deploy_service(task: str, project: str, service: str, build_path: str, call
                     "model": "direct",
                     "description": f"Container removal denied for {service}",
                     "action": "deploy_complete",
-                    "result": f"⚠️ Container removal denied by owner. Old container restarted. Deploy aborted.",
+                    "result": "⚠️ Container removal denied by owner. Old container restarted. Deploy aborted.",
                 }
             old.remove()
         except Exception:

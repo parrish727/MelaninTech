@@ -8,6 +8,7 @@ Features:
 """
 import os
 import subprocess
+
 import httpx
 from smolagents import Tool
 
@@ -182,7 +183,7 @@ def _load_registry_descriptions() -> str:
                 for tool in sidecar.get("tools", []):
                     lines.append(f"{name}.{tool['name']}: {tool['description']}")
             # Gateway tools
-            gateway = registry.get("mcp_sidecars", {}).get("slack", {})
+            registry.get("mcp_sidecars", {}).get("slack", {})
             # Internal tools
             for name, service in registry.get("internal_tools", {}).items():
                 for tool in service.get("tools", []):

@@ -15,8 +15,8 @@ Resolution order:
 3. Relative to this file: ../../.kiro/steering/ (local dev)
 4. Workspace root: /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering/ (fallback)
 """
-import os
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -52,7 +52,7 @@ AGENT_FILES: dict[str, list[str]] = {
 SHARED_FILES: list[str] = ["Environments.md", "Security.md", "AgentBehavior.md"]
 
 
-def _resolve_steering_dir() -> Optional[Path]:
+def _resolve_steering_dir() -> Path | None:
     """Find the steering directory from multiple possible locations."""
     candidates = [
         os.environ.get("STEERING_DIR", ""),
@@ -78,7 +78,7 @@ def _load_file(path: Path) -> str:
             if len(parts) >= 3:
                 content = parts[2].strip()
         return content
-    except (OSError, IOError) as e:
+    except OSError as e:
         logger.debug(f"Could not load steering file {path}: {e}")
         return ""
 
@@ -204,7 +204,7 @@ def load_profiles() -> dict[str, dict]:
     for json_file in profiles_dir.glob("*.json"):
         try:
             data = json.loads(json_file.read_text(encoding="utf-8"))
-            name = data.get("name", json_file.stem)
+            data.get("name", json_file.stem)
             profiles[json_file.stem] = data
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load profile {json_file}: {e}")

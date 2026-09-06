@@ -10,9 +10,9 @@ Analyzes darius_traces to identify:
 
 Output: structured insights that feed into the skill refinement engine.
 """
-import os
 import json
 import logging
+import os
 from datetime import datetime
 
 logger = logging.getLogger("darius.swarm.analyzer")

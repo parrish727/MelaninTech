@@ -10,11 +10,12 @@ When the analyzer identifies recurring failures or skill gaps, this engine:
 The improvement cycle:
   analyze → identify gaps → propose refinements → review → apply
 """
-import os
 import json
-import time
 import logging
+import os
+import time
 from pathlib import Path
+
 from litellm import completion
 
 logger = logging.getLogger("darius.swarm.refiner")

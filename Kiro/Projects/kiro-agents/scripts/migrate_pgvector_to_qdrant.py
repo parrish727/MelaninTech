@@ -21,20 +21,20 @@ Env vars required:
     QDRANT_URL — Qdrant API endpoint (default: http://qdrant:6333)
     OLLAMA_URL — Ollama API endpoint (default: http://ollama:11434)
 """
+import argparse
+import json
+import logging
 import os
 import sys
-import json
 import time
-import argparse
-import logging
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
 from integrations.qdrant_client import SemanticLayer
+from psycopg2.extras import RealDictCursor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -320,7 +320,7 @@ def main():
     for collection, count in totals.items():
         logger.info(f"  {collection}: {count} points")
         total_points += count
-    logger.info(f"  ────────────────────────────")
+    logger.info("  ────────────────────────────")
     logger.info(f"  TOTAL: {total_points} points")
     logger.info(f"  Time: {elapsed:.1f}s")
     logger.info(f"  Status: {'DRY RUN' if args.dry_run else 'COMPLETE'}")

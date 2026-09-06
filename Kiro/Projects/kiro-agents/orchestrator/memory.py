@@ -10,8 +10,9 @@ Tables (pgvector — kept for fallback):
   task_memory — past task decisions with embeddings
   conversation_memory — CEO/system conversation turns with embeddings
 """
-import os
 import logging
+import os
+
 import httpx
 import psycopg2
 from psycopg2.extras import RealDictCursor

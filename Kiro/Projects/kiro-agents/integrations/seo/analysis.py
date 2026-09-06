@@ -12,15 +12,16 @@ Analysis types:
   5. CTA effectiveness — high impressions but low CTR (title/meta issues)
   6. Content freshness — pages not generating engagement
 """
-import os
 import json
 import logging
+import os
 from datetime import datetime
+
 from integrations.seo.models import (
-    get_site,
+    get_findings,
     get_gsc_data,
     get_keywords,
-    get_findings,
+    get_site,
     store_finding,
 )
 from integrations.seo.serp import SERPTracker

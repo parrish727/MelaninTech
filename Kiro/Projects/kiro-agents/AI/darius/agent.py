@@ -12,17 +12,18 @@ Features (v2.0):
 - Session persistence and replay
 - Rate limit retry with backoff
 """
+import logging
 import os
 import time
-import logging
 import uuid
-from smolagents import ToolCallingAgent, LiteLLMModel
-from AI.darius.tools import ALL_TOOLS
-from AI.darius.planner import PlannerTool, plan_task
+
+from AI.darius.context import build_context, maybe_compress
 from AI.darius.evaluator import EvaluatorTool
-from AI.darius.context import maybe_compress, build_context
 from AI.darius.executor import execute_dag, format_dag_results
 from AI.darius.memory import log_trace
+from AI.darius.planner import PlannerTool, plan_task
+from AI.darius.tools import ALL_TOOLS
+from smolagents import LiteLLMModel, ToolCallingAgent
 
 logging.getLogger("smolagents").setLevel(logging.ERROR)
 logging.getLogger("litellm").setLevel(logging.ERROR)
@@ -208,7 +209,7 @@ def run_task(task: str, session_id: str = None, model_source: str = None, model_
       5. Compress context if threshold reached
       6. Log full trace for training data
     """
-    from AI.darius.memory import save_turn, load_session
+    from AI.darius.memory import load_session, save_turn
 
     task_id = f"task-{uuid.uuid4().hex[:8]}"
     start_time = time.time()
@@ -255,7 +256,6 @@ def run_task(task: str, session_id: str = None, model_source: str = None, model_
         # Single darius step — use the smolagents agent directly (most flexible)
         agent, model_label = build_agent(task, model_source=actual_source, model_override=model_override)
 
-        timeout_limit = _LOCAL_TIMEOUT if actual_source == "local" else 300
 
         for attempt in range(3):
             try:

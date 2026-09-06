@@ -9,10 +9,10 @@ Usage:
     python3 scripts/vault_sync.py --unlock # Restore .env from vault
     python3 scripts/vault_sync.py --status # Check kill switch state
 """
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -58,7 +58,7 @@ def engage_kill_switch(reason: str = "Manual lock"):
         BACKUP_FILE.write_text(ENV_FILE.read_text())
 
     # Wipe .env — containers will fail to authenticate on restart
-    ENV_FILE.write_text("# KILL SWITCH ENGAGED — secrets revoked\n# Reason: {}\n# Time: {}\n# To restore: python3 scripts/vault_sync.py --unlock\n".format(reason, datetime.now().isoformat()))
+    ENV_FILE.write_text(f"# KILL SWITCH ENGAGED — secrets revoked\n# Reason: {reason}\n# Time: {datetime.now().isoformat()}\n# To restore: python3 scripts/vault_sync.py --unlock\n")
 
     # Create lock file
     KILL_SWITCH_FILE.write_text(json.dumps({

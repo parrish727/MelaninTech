@@ -1,6 +1,7 @@
 import os
-import uvicorn
+
 import httpx
+import uvicorn
 from agents.base_agent import create_app
 from agents.design_spec import DESIGN_SPEC
 

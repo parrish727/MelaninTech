@@ -11,9 +11,10 @@ Namespaces:
 
 Table: scoped_memory (extends existing task_memory pattern)
 """
-import os
 import json
 import logging
+import os
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 

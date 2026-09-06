@@ -12,16 +12,16 @@ Unlike the old DAG executor:
 - Parallel execution is real (ThreadPoolExecutor)
 - The coordinator can replan mid-execution
 """
-import os
 import json
+import logging
+import os
 import time
 import uuid
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from litellm import completion
 
-from AI.darius.swarm.memory import SharedMemory
 from AI.darius.swarm.agent import SwarmAgent
+from AI.darius.swarm.memory import SharedMemory
+from litellm import completion
 
 logger = logging.getLogger("darius.swarm.coordinator")
 

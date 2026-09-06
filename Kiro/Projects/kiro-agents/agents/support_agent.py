@@ -1,5 +1,6 @@
 """Support Agent — client-facing bug diagnosis and fixes (contract-gated)."""
 import os
+
 import uvicorn
 from agents.base_agent import create_app
 

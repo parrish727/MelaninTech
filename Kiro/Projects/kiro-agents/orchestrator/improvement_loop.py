@@ -14,12 +14,13 @@ Flow:
 
 This module is called by the orchestrator when an SEO-originated internal ticket is approved.
 """
-import os
 import json
-import time
 import logging
-import httpx
+import os
+import time
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger("improvement_loop")
 
@@ -63,8 +64,8 @@ def build_frontend_task(finding: dict, design_system: dict) -> str:
 
     # Design system context
     colors = design_system.get("colors", {})
-    typography = design_system.get("typography", {})
-    patterns = design_system.get("patterns", {})
+    design_system.get("typography", {})
+    design_system.get("patterns", {})
 
     design_context = (
         f"DESIGN SYSTEM CONSTRAINTS:\n"

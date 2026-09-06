@@ -12,11 +12,13 @@ Keyword categories:
   - problem: "how to automate business processes", "best software agency"
   - competitor: terms competitors rank for that we don't
 """
-import os
 import json
 import logging
+import os
+
 import httpx
-from integrations.seo.models import get_site, upsert_keyword, get_keywords
+
+from integrations.seo.models import get_keywords, get_site, upsert_keyword
 
 logger = logging.getLogger("seo.keywords")
 

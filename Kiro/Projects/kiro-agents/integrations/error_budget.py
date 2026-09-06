@@ -25,16 +25,16 @@ Usage:
     # Check if deploys should be blocked
     frozen = engine.is_feature_frozen()
 """
+import logging
 import os
 import time
-import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
-from dataclasses import dataclass
 
+import httpx
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import httpx
 
 logger = logging.getLogger("error_budget")
 
@@ -94,9 +94,9 @@ class BurnRateResult:
     slo_name: str
     current_burn_rate: float
     budget_remaining_pct: float
-    hours_to_exhaustion: Optional[float]
-    alert_tier: Optional[str]       # "fast_burn", "slow_burn", or None
-    alert_severity: Optional[str]   # "critical", "warning", or None
+    hours_to_exhaustion: float | None
+    alert_tier: str | None       # "fast_burn", "slow_burn", or None
+    alert_severity: str | None   # "critical", "warning", or None
     window_error_rate: float
     is_firing: bool
 

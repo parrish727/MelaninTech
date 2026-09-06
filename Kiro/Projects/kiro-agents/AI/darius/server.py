@@ -7,14 +7,21 @@ Endpoints:
   GET  /status        — dashboard: sessions, recent activity
 """
 import os
+
 import uvicorn
-from fastapi import FastAPI
-from AI.darius.agent import run_task, chain_tasks, run_template
+from AI.darius.agent import chain_tasks, run_task, run_template
 from AI.darius.memory import list_sessions, load_session
+from fastapi import FastAPI
 
 # Initialize distributed tracing
 try:
-    from integrations.tracing import init_tracing, traced, span, get_trace_id, record_llm_call
+    from integrations.tracing import (
+        get_trace_id,
+        init_tracing,
+        record_llm_call,
+        span,
+        traced,
+    )
     init_tracing("darius", version="3.0.0")
 except Exception:
     # Graceful degradation — tracing is non-critical
@@ -100,8 +107,8 @@ def task_delta(body: dict):
     Body: {"task": "...", "project": "...", "session_id": "...", "model": "..."}
     Returns: {"agent": "DariusAgent", "engine": "delta", "result": {...}}
     """
-    from AI.darius.swarm.executor import DeltaExecutor
     from AI.darius.context import build_context
+    from AI.darius.swarm.executor import DeltaExecutor
 
     task_text = body["task"]
     project = body.get("project", "default")
@@ -145,8 +152,8 @@ def task_swarm(body: dict):
     Body: {"task": "...", "project": "...", "session_id": "..."}
     Returns: {"agent": "DariusAgent", "engine": "swarm", "result": {...}}
     """
-    from AI.darius.swarm.swarm import AgentSwarm
     from AI.darius.context import build_context
+    from AI.darius.swarm.swarm import AgentSwarm
 
     task_text = body["task"]
     project = body.get("project", "default")
@@ -203,11 +210,11 @@ def task_auto(body: dict):
 
     Body: {"task": "...", "project": "...", "session_id": "..."}
     """
-    from AI.darius.swarm.selector import select_engine, classify_task
+    from AI.darius.swarm.selector import classify_task, select_engine
 
     task_text = body["task"]
     project = body.get("project", "default")
-    session_id = body.get("session_id", project)
+    body.get("session_id", project)
     classification = classify_task(task_text)
 
     # Fast path: simple questions, status checks, and SRE diagnostics
@@ -223,9 +230,10 @@ def task_auto(body: dict):
 
     if is_fast:
         # Single-shot completion with the context already in the task — fast, no planning overhead
-        import time as _t
-        from litellm import completion as _completion
         import os
+        import time as _t
+
+        from litellm import completion as _completion
 
         start = _t.time()
         _api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -260,7 +268,7 @@ def task_auto(body: dict):
                 "latency_ms": latency,
                 "args": {"task": task_text, "project": project, "proposal": result_text},
             }
-        except Exception as e:
+        except Exception:
             pass  # Fall through to full engine
 
     # Full engine routing for complex tasks
@@ -366,6 +374,7 @@ def chat(body: dict):
     """
     import os
     import time
+
     import httpx
     from litellm import completion
 
@@ -520,6 +529,7 @@ def status():
 
 # ── Start Autonomous Heartbeat on Server Startup ──────────────────────────────
 from AI.darius.swarm.autonomous import start as _start_autonomous
+
 _start_autonomous()
 
 

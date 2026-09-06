@@ -12,10 +12,10 @@ Schema:
 
 All keys expire after 1 hour (configurable via TTL).
 """
-import os
 import json
-import time
 import logging
+import os
+import time
 from typing import Any
 
 logger = logging.getLogger("darius.swarm.memory")

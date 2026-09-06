@@ -7,8 +7,9 @@ Tables:
   darius_traces   — full reasoning chain for training data extraction
   darius_context_summaries — compressed context for long-running sessions
 """
-import os
 import json
+import os
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 

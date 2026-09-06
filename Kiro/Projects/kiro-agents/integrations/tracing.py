@@ -25,12 +25,13 @@ Env vars:
     OTEL_ENDPOINT — OTEL Collector endpoint (default: http://otel-collector:4317)
     OTEL_ENABLED — Set to "false" to disable tracing (default: true)
 """
-import os
-import time
 import functools
 import logging
-from typing import Optional, Callable
+import os
+import time
+from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Optional
 
 logger = logging.getLogger("tracing")
 
@@ -56,11 +57,13 @@ def init_tracing(service_name: str, version: str = "1.0.0"):
 
     try:
         from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
         resource = Resource.create({
             SERVICE_NAME: service_name,

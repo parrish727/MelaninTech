@@ -3,6 +3,7 @@ Auto-deploy pipeline: rebuilds testing then staging after proposal approval.
 After staging, posts a production approval button.
 """
 import os
+
 import docker as docker_sdk
 from config.settings import SLACK_CHANNEL_ID
 
@@ -21,7 +22,7 @@ PRODUCTION = {"name": "production", "service": "docker-production-server-1", "im
 
 
 def _rebuild(env: dict, client: docker_sdk.DockerClient) -> str:
-    image, _ = client.images.build(
+    _image, _ = client.images.build(
         path=WEBSITE_PATH,
         tag=env["image"],
         rm=True,

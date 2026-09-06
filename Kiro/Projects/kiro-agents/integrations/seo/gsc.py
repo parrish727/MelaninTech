@@ -9,13 +9,15 @@ Data pulled:
   - Page performance (which pages rank for which queries)
   - 28-day rolling window (GSC standard)
 """
-import os
 import json
-import time
 import logging
-import httpx
+import os
+import time
 from datetime import datetime, timedelta
-from integrations.seo.models import store_gsc_data, get_site, upsert_keyword
+
+import httpx
+
+from integrations.seo.models import get_site, store_gsc_data, upsert_keyword
 
 logger = logging.getLogger("seo.gsc")
 

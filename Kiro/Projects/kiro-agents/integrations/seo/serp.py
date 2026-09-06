@@ -10,15 +10,17 @@ Detects:
   - New rankings (keywords we just started ranking for)
   - Lost rankings (keywords we fell off page 1+)
 """
+import logging
 import os
 import time
-import logging
+
 import httpx
+
 from integrations.seo.models import (
-    get_site,
     get_keywords,
-    store_serp_position,
     get_position_history,
+    get_site,
+    store_serp_position,
 )
 
 logger = logging.getLogger("seo.serp")
@@ -195,11 +197,7 @@ class SERPTracker:
             delta = previous - current  # Positive = improved (lower rank number = better)
 
             if abs(delta) >= min_change:
-                if direction == "up" and delta > 0:
-                    movers.append({"keyword": kw["keyword"], "delta": delta, "current": current, "previous": previous})
-                elif direction == "down" and delta < 0:
-                    movers.append({"keyword": kw["keyword"], "delta": delta, "current": current, "previous": previous})
-                elif direction == "both":
+                if direction == "up" and delta > 0 or direction == "down" and delta < 0 or direction == "both":
                     movers.append({"keyword": kw["keyword"], "delta": delta, "current": current, "previous": previous})
 
         return sorted(movers, key=lambda x: abs(x["delta"]), reverse=True)

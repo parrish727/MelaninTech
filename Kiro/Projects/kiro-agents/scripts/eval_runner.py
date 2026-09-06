@@ -35,12 +35,12 @@ Env vars:
     ANTHROPIC_API_KEY — For LLM-as-judge scoring
     EVAL_THRESHOLD — Pass threshold (default: 0.85)
 """
+import argparse
+import json
+import logging
 import os
 import sys
-import json
 import time
-import argparse
-import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -296,7 +296,7 @@ def run_evaluation(lob_cases: dict[str, list[dict]], use_judge: bool = True, thr
     print(f"  Threshold: {threshold:.0%} | Time: {elapsed:.1f}s")
     print(f"  Cases: {total_passed} passed, {total_failed} failed")
     print(f"{'─'*60}")
-    print(f"  Per-LOB Scores:")
+    print("  Per-LOB Scores:")
     for name, lr in sorted(lob_reports.items()):
         icon = "✓" if lr["status"] == "pass" else "✗"
         print(f"    {icon} {name:20s} {lr['score']:.1%}  ({lr['passed']}/{lr['total']})")
@@ -316,7 +316,7 @@ def main():
     lob_cases = load_golden_sets(lob=args.lob)
 
     if not lob_cases:
-        logger.error(f"No golden test cases found in eval/golden_sets/")
+        logger.error("No golden test cases found in eval/golden_sets/")
         sys.exit(1)
 
     report = run_evaluation(

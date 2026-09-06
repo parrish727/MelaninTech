@@ -14,6 +14,7 @@ Usage:
     active = list_active()
 """
 import os
+
 import docker
 
 _DOCKER_CLIENT = None

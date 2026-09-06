@@ -6,10 +6,11 @@ Accepts JSON-RPC 2.0 requests, routes to the appropriate integration.
 
 This avoids needing separate containers for each — one gateway handles all custom MCPs.
 """
-import os
 import json
-import subprocess
 import logging
+import os
+import subprocess
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -130,7 +131,7 @@ def _google_gsc_query(params: dict) -> dict:
     import sys
     sys.path.insert(0, "/app")
     from integrations.seo.gsc import GSCConnector
-    from integrations.seo.models import get_site, get_gsc_data
+    from integrations.seo.models import get_gsc_data, get_site
     domain = params.get("domain", "melanin-tech.com")
     site = get_site(domain)
     if not site:
@@ -142,8 +143,9 @@ def _google_gsc_query(params: dict) -> dict:
 def _google_gmail_read(params: dict) -> dict:
     import sys
     sys.path.insert(0, "/app")
-    from integrations.gmail import GmailConnector
     import json as _json
+
+    from integrations.gmail import GmailConnector
     creds_path = "/app/integrations/credentials/melanin-tech/gmail.json"
     try:
         with open(creds_path) as f:
@@ -158,8 +160,9 @@ def _google_gmail_read(params: dict) -> dict:
 def _google_gmail_send(params: dict) -> dict:
     import sys
     sys.path.insert(0, "/app")
-    from integrations.gmail import GmailConnector
     import json as _json
+
+    from integrations.gmail import GmailConnector
     creds_path = "/app/integrations/credentials/melanin-tech/gmail.json"
     try:
         with open(creds_path) as f:

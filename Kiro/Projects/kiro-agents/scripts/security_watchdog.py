@@ -13,11 +13,11 @@ Flow:
   4. If approved → engage kill switch
   5. If dismissed → log and continue monitoring
 """
-import os
-import sys
 import json
-import time
+import os
 import subprocess
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 

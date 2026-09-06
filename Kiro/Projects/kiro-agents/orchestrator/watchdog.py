@@ -10,12 +10,17 @@ Lifecycle:
        → failed_backlog  (non-urgent, exhausted retries)
        → failed_urgent   (urgent, stays visible, never backlogged)
 """
+import logging
 import threading
 import time
-import logging
 from datetime import datetime, timezone
 
-from orchestrator.tickets import get_stuck_tickets, update_ticket, increment_attempts, MAX_ATTEMPTS
+from orchestrator.tickets import (
+    MAX_ATTEMPTS,
+    get_stuck_tickets,
+    increment_attempts,
+    update_ticket,
+)
 
 log = logging.getLogger(__name__)
 
@@ -130,8 +135,9 @@ def _handle_stuck(ticket: dict):
 def _retry(ticket: dict):
     """Spin up a fresh agent call for the ticket without blocking the watchdog."""
     import threading
-    from orchestrator.router import route
+
     from orchestrator.approval import request_approval
+    from orchestrator.router import route
 
     def _run():
         try:
@@ -173,7 +179,7 @@ def _sweep():
 
 def _status_digest():
     """Post a 12-hour activity report to Slack every 5 hours."""
-    from orchestrator.tickets import list_tickets, _get_conn
+    from orchestrator.tickets import _get_conn, list_tickets
     from psycopg2.extras import RealDictCursor
 
     conn = _get_conn()
@@ -244,6 +250,7 @@ def start():
 # If health snapshots stop for >15 min, alerts Slack and auto-restarts HUD.
 
 import os
+
 import psycopg2
 
 _last_gap_check = 0
