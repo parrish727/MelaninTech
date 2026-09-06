@@ -11,9 +11,9 @@ Usage (manual):
 Docker (scheduled via compose):
     Runs as a one-shot container triggered by the orchestrator watchdog.
 """
-import sys
 import json
 import logging
+import sys
 from datetime import datetime
 
 sys.path.insert(0, "/app")

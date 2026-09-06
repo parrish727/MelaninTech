@@ -1,6 +1,7 @@
 import os
-from orchestrator.memory import store, recall, store_conversation
-from orchestrator.tickets import open_ticket, update_ticket, heartbeat, MAX_ATTEMPTS
+
+from orchestrator.memory import recall, store, store_conversation
+from orchestrator.tickets import MAX_ATTEMPTS, heartbeat, open_ticket, update_ticket
 
 PREVIEW_DIR = "/app/previews"
 pending_approvals = {}
@@ -243,8 +244,8 @@ def execute_proposal(proposal: dict) -> str:
 
     if action == "slack_post":
         # Orchestrator posts content directly to a Slack channel
-        from config.settings import SLACK_BOT_TOKEN
         import httpx as _hx
+        from config.settings import SLACK_BOT_TOKEN
         target_channel = args.get("target_channel") or os.environ.get("SLACK_CHANNEL_ID", "")
         content = args.get("content", proposal_text)
 
@@ -304,10 +305,10 @@ def execute_proposal(proposal: dict) -> str:
     if action == "email":
         # Orchestrator sends email via SMTP
         import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.base import MIMEBase
         from email import encoders
+        from email.mime.base import MIMEBase
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
 
         recipient = args.get("recipient")
         attachment_path = args.get("attachment_path")
@@ -464,7 +465,8 @@ def execute_proposal(proposal: dict) -> str:
         return proposal.get("result", "✅ Deploy complete.")
 
     if action == "deploy":
-        import re, subprocess
+        import re
+        import subprocess
         project = args.get("project", "")
         callback_id = proposal.get("_callback_id")
 
@@ -503,7 +505,7 @@ def execute_proposal(proposal: dict) -> str:
                     )
                     if not approved:
                         old.start()
-                        return f"⚠️ Container removal denied by owner. Old container restarted. Deploy aborted."
+                        return "⚠️ Container removal denied by owner. Old container restarted. Deploy aborted."
                     old.remove()
                 except Exception:
                     pass
@@ -607,6 +609,7 @@ def handle_approval(ack, body, action, say, app=None):
         # Auto-deploy to testing → staging ONLY for melanin-tech-website
         if proposal.get("action") in ("frontend", "scaffold", "backend") and proposal["args"].get("project", "").lower() in ("melanin-tech-website", "default"):
             import threading
+
             from orchestrator.deploy_pipeline import deploy_pipeline
             threading.Thread(
                 target=deploy_pipeline,
@@ -639,6 +642,7 @@ def handle_modify_submit(ack, body, view, say, app=None):
 
     if proposal.get("action") in ("frontend", "scaffold", "backend") and proposal["args"].get("project", "").lower() in ("melanin-tech-website", "default"):
         import threading
+
         from orchestrator.deploy_pipeline import deploy_pipeline
         threading.Thread(
             target=deploy_pipeline,

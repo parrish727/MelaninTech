@@ -14,12 +14,13 @@ Flow:
 
 This module is called by the orchestrator when an SEO-originated internal ticket is approved.
 """
-import os
 import json
-import time
 import logging
-import httpx
+import os
+import time
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger("improvement_loop")
 

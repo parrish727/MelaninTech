@@ -12,6 +12,7 @@ Tables:
 All tables auto-created on first import.
 """
 import os
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 

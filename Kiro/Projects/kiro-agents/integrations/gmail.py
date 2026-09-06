@@ -1,6 +1,7 @@
 """Gmail Connector — read, send, label, search emails."""
 import base64
 from email.mime.text import MIMEText
+
 from integrations import BaseConnector, IntegrationRegistry
 
 

@@ -12,6 +12,7 @@ Run inside Docker network (has access to Postgres):
     bash -c "pip install -q psycopg2-binary httpx && python3 /app/scripts/register_seo_sites.py"
 """
 import sys
+
 sys.path.insert(0, "/app")
 
 from integrations.seo.models import register_site, upsert_keyword

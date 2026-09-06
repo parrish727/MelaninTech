@@ -28,6 +28,7 @@ NOT YOUR SCOPE (what Support handles):
 - Feature-level debugging
 """
 import os
+
 import uvicorn
 from agents.base_agent import create_app
 
@@ -50,7 +51,7 @@ def handle(task: str, project: str, proposal_text: str, model: str) -> dict:
         return {
             "agent": "SREAgent",
             "model": "none (live query)",
-            "description": f"SREAgent: live status report",
+            "description": "SREAgent: live status report",
             "action": "sre",
             "args": {
                 "task": task,

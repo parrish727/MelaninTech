@@ -10,12 +10,12 @@ Usage:
   python -m AI.darius.cli --improve               # run self-improvement cycle
 """
 import argparse
+import contextlib
+import io
+import json
+import logging
 import sys
 import uuid
-import logging
-import io
-import contextlib
-import json
 
 logging.basicConfig(level=logging.ERROR)
 logging.getLogger("smolagents").setLevel(logging.ERROR)
@@ -58,8 +58,8 @@ def _run_with_engine(task: str, session_id: str, engine: str) -> str:
         return run_task(task, session_id=session_id)
 
     elif engine == "delta":
-        from AI.darius.swarm.executor import DeltaExecutor
         from AI.darius.context import build_context
+        from AI.darius.swarm.executor import DeltaExecutor
         context = ""
         try:
             context = build_context(session_id, task) or ""
@@ -72,8 +72,8 @@ def _run_with_engine(task: str, session_id: str, engine: str) -> str:
         return f"{header}\n\n{result.get('final_output', '')}"
 
     elif engine == "swarm":
-        from AI.darius.swarm.swarm import AgentSwarm
         from AI.darius.context import build_context
+        from AI.darius.swarm.swarm import AgentSwarm
         context = ""
         try:
             context = build_context(session_id, task) or ""
@@ -88,7 +88,7 @@ def _run_with_engine(task: str, session_id: str, engine: str) -> str:
         return f"{header}\n\n{result.get('final_output', '')}"
 
     elif engine == "auto":
-        from AI.darius.swarm.selector import select_engine, classify_task
+        from AI.darius.swarm.selector import classify_task, select_engine
         selected = select_engine(task)
         classification = classify_task(task)
         print(f"  [auto] classified as '{classification}' → engine '{selected}'")
@@ -188,7 +188,7 @@ def main():
                 engine = new_engine
                 print(f"  Switched to engine: {engine}")
             else:
-                print(f"  Unknown engine. Options: auto, delta, swarm, legacy")
+                print("  Unknown engine. Options: auto, delta, swarm, legacy")
             continue
 
         if _is_conversational(task):

@@ -16,14 +16,14 @@ Flow:
 
 Token savings: 67-87% compared to smolagents ToolCallingAgent.
 """
+import json
+import logging
 import os
 import time
-import json
 import uuid
-import logging
-from litellm import completion
 
 from AI.darius.swarm.memory import SharedMemory
+from litellm import completion
 
 logger = logging.getLogger("darius.swarm.executor")
 

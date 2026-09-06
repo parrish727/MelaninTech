@@ -15,11 +15,11 @@ Usage:
   python3 scripts/export_training_data.py --format conversation --output training_conv.jsonl
   python3 scripts/export_training_data.py --since 2026-07-01 --min-score 0.8
 """
+import argparse
+import json
+import logging
 import os
 import sys
-import json
-import argparse
-import logging
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))

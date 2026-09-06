@@ -9,9 +9,9 @@ Usage:
     config = select_model("refactor the authentication system")
     # Returns: {"model": "anthropic/claude-sonnet-4-6", "max_tokens": 8192, "temperature": 0.3, "rule": "heavy_reasoning"}
 """
-import os
 import json
 import logging
+import os
 
 logger = logging.getLogger("darius.model_router")
 

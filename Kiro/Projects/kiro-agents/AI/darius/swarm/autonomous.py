@@ -20,11 +20,11 @@ Intervals:
 - Self-improvement: every 24 hours
 - Daily digest: every 24 hours (offset from improvement by 1h)
 """
-import os
-import time
 import json
 import logging
+import os
 import threading
+import time
 from datetime import datetime
 
 logger = logging.getLogger("darius.autonomous")
@@ -182,8 +182,8 @@ def _extract_and_write_files(output: str, ticket_id: int) -> list[str]:
     
     Returns list of file paths written.
     """
-    import re
     import os
+    import re
 
     written = []
     _PROJECTS_BASE = os.environ.get("PROJECTS_BASE", "/app/Projects")
@@ -244,7 +244,7 @@ def _execute_ticket(ticket: dict):
     _claim_ticket(ticket_id)
 
     try:
-        from AI.darius.swarm.selector import select_engine, record_execution
+        from AI.darius.swarm.selector import record_execution, select_engine
 
         engine = select_engine(task)
         logger.info(f"[autonomous] Ticket #{ticket_id} → engine '{engine}'")

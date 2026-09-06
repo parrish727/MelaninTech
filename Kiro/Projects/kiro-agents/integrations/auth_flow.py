@@ -6,13 +6,14 @@ Run locally, opens browser for authorization, saves tokens.
 Usage:
     python3 integrations/auth_flow.py --provider google --client melanin-tech
 """
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
 import webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
+
 import httpx
 
 CREDS_DIR = os.path.join(os.path.dirname(__file__), "credentials")
@@ -75,7 +76,7 @@ def google_auth(client_id: str):
         f"&response_type=code&scope={scope_str}&access_type=offline&prompt=consent"
     )
 
-    print(f"Opening browser for authorization...")
+    print("Opening browser for authorization...")
     print(f"If browser doesn't open, visit:\n{auth_url}\n")
     webbrowser.open(auth_url)
 

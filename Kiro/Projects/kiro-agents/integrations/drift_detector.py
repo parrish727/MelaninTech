@@ -29,19 +29,20 @@ Env vars:
     DARIUS_URL — Darius API (default: http://darius:8001)
     DRIFT_THRESHOLD — Cosine distance threshold (default: 0.15)
 """
+import argparse
+import json
+import logging
 import os
 import sys
-import json
 import time
-import logging
-import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
+
 from integrations.qdrant_client import SemanticLayer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
@@ -299,7 +300,7 @@ class DriftDetector:
 
         return cases
 
-    def _run_agent_query(self, query: str, project: str = "default") -> Optional[str]:
+    def _run_agent_query(self, query: str, project: str = "default") -> str | None:
         """Run a query through the Darius agent and get the output."""
         try:
             response = self._http.post(

@@ -9,12 +9,12 @@ Unlike Docker container agents (fixed skill, always running), a SwarmAgent is:
 
 Lifecycle: instantiate → run → write results → terminate
 """
+import logging
 import os
 import time
-import logging
-from litellm import completion
 
 from AI.darius.swarm.memory import SharedMemory
+from litellm import completion
 
 logger = logging.getLogger("darius.swarm.agent")
 

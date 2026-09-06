@@ -5,8 +5,9 @@ Steps with type: approve are explicit human gates that block until approved.
 """
 import os
 import re
-import yaml
 from dataclasses import dataclass, field
+
+import yaml
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
 

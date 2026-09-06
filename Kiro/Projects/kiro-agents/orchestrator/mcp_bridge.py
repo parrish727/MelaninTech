@@ -3,8 +3,9 @@ MCP Bridge — calls MCP sidecar servers via JSON-RPC 2.0 over HTTP/SSE.
 GitHub MCP uses POST /mcp with Bearer token (SSE response).
 Other sidecars use POST /message (JSON response).
 """
-import os
 import json
+import os
+
 import httpx
 
 _GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")

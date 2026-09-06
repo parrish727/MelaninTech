@@ -12,11 +12,12 @@ Usage:
     sl.upsert("task_memory", id="task-123", text="...", metadata={...})
     results = sl.search("task_memory", query="fix auth bug", limit=5)
 """
+import logging
 import os
 import uuid
-import logging
-import httpx
 from typing import Optional
+
+import httpx
 
 logger = logging.getLogger("semantic_layer")
 

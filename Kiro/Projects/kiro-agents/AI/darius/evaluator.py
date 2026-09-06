@@ -14,13 +14,14 @@ Retry policy:
 
 All evaluation passes are logged to darius_traces for training data.
 """
+import json
+import logging
 import os
 import re
-import json
 import time
-import logging
-from smolagents import Tool
+
 from litellm import completion
+from smolagents import Tool
 
 logger = logging.getLogger("darius.evaluator")
 
@@ -36,8 +37,12 @@ MAX_RETRIES = min(int(os.environ.get("DARIUS_MAX_EVAL_RETRIES", "3")), 6)
 _BLOCKED_PATTERNS = ["rm -rf", "DROP TABLE", "DROP DATABASE", "TRUNCATE", "format /", "mkfs"]
 
 # Minimum score to pass — now task-type-aware
-from AI.darius.task_classifier import classify_task, TaskType
-from AI.darius.evaluation_prompts import get_evaluation_prompt, get_pass_threshold, PASS_THRESHOLDS
+from AI.darius.evaluation_prompts import (
+    PASS_THRESHOLDS,
+    get_evaluation_prompt,
+    get_pass_threshold,
+)
+from AI.darius.task_classifier import TaskType, classify_task
 
 _PASS_THRESHOLD = 0.7  # Default fallback
 

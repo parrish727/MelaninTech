@@ -1,5 +1,6 @@
-import os
 import json
+import os
+
 from fastapi import FastAPI, HTTPException
 
 # OpenRouter uses the OpenAI SDK with a custom base URL.
@@ -12,6 +13,7 @@ _SKILLS_DIR = os.path.join(os.path.dirname(__file__), "skills")
 
 # Enterprise AI Agent Framework — Steering Loader
 from agents.steering_loader import load_agent_steering, load_shared_steering
+
 
 # --- Skill Loader ---
 def load_skill(skill_name: str) -> str:
@@ -123,7 +125,6 @@ def _guard_credit_balance():
 
 class CreditExhaustedError(Exception):
     """Raised when monthly credit budget is nearly exhausted."""
-    pass
 
 
 _MCP_URL = os.environ.get("MCP_URL", "http://mcp-server:9000")
@@ -313,7 +314,7 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
         # Log as 'credit_guard' — this is a PREVENTED failure, not a system error
         _log_trace("agent", model, "default", task_text[:100], 0, 0, latency_ms, "credit_guard")
         # Return a graceful degradation response instead of crashing
-        return f"[Credit budget guard] Unable to process — {str(e)}. Task has been queued for when credits are available."
+        return f"[Credit budget guard] Unable to process — {e!s}. Task has been queued for when credits are available."
     except Exception as e:
         latency_ms = int((_t.time() - start) * 1000)
         error_type = type(e).__name__
@@ -326,7 +327,7 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
             # Anthropic returned credit exhaustion — log as credit_guard, not error
             status = "credit_guard"
             _log_trace("agent", model, "default", task_text[:100], input_tokens, output_tokens, latency_ms, status, error_type=error_type, error_message=error_msg)
-            return f"[Credit exhausted] Anthropic API credits depleted. Contact pktech_dev to top up."
+            return "[Credit exhausted] Anthropic API credits depleted. Contact pktech_dev to top up."
         else:
             status = "error"
         _log_trace("agent", model, "default", task_text[:100], input_tokens, output_tokens, latency_ms, status, error_type=error_type, error_message=error_msg)

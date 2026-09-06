@@ -22,11 +22,11 @@ Exit codes:
     0 — all checks pass
     1 — one or more checks failed
 """
+import argparse
+import logging
 import os
 import sys
 import time
-import argparse
-import logging
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

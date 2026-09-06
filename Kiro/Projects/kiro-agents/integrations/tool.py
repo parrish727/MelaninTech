@@ -2,8 +2,9 @@
 Integration Tool for Darius — wraps all connectors into a single tool interface.
 Darius can call any connector action through this unified tool.
 """
-import os
 import json
+import os
+
 from smolagents import Tool
 
 # Import connectors (they auto-register)

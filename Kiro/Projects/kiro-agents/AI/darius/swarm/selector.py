@@ -13,10 +13,10 @@ Score = weighted combination of:
 When a new task comes in, classify it and route to the best-performing engine
 based on historical data. Falls back to 'delta' if no data available.
 """
-import os
-import json
 import hashlib
+import json
 import logging
+import os
 
 logger = logging.getLogger("darius.swarm.selector")
 

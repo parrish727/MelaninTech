@@ -16,10 +16,10 @@ GitHub Actions (add to workflow):
         -H "Content-Type: application/json" \
         -d '{"project": "orthoflow-ai", "source": "github-actions", "ref": "${{ github.sha }}"}'
 """
-import threading
-import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
+import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
 

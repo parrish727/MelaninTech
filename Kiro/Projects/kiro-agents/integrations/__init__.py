@@ -3,12 +3,13 @@ Integration Engine — Base connector class.
 All connectors (Gmail, Notion, Calendar, CRM) inherit from this.
 Handles: OAuth token management, rate limiting, error handling, retry.
 """
+import json
 import os
 import time
-import json
-import httpx
-from typing import Any
 from abc import ABC, abstractmethod
+from typing import Any
+
+import httpx
 
 
 class BaseConnector(ABC):
@@ -39,7 +40,6 @@ class BaseConnector(ABC):
 
     def _refresh_token(self):
         """Override per provider (Google, Microsoft, etc.)"""
-        pass
 
     def _request(self, method: str, url: str, **kwargs) -> dict:
         """Make authenticated HTTP request with retry."""
