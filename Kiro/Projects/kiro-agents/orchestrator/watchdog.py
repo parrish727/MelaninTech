@@ -228,6 +228,10 @@ def start():
         while True:
             time.sleep(POLL_INTERVAL)
             _sweep()
+            # Direct HUD container check (both backend + frontend) — runs every
+            # cycle, independent of DB snapshots. Catches frontend outages the
+            # snapshot-gap check cannot see, and recovers created/exited containers.
+            check_hud_containers(_slack_app, _slack_channel)
             # Check for monitoring gaps (HUD snapshots, SLA tracking)
             check_monitoring_gaps(_slack_app, _slack_channel)
             # SRE: check for stale change windows + external health
@@ -293,10 +297,91 @@ def check_monitoring_gaps(app, channel):
         log.error(f"Monitoring gap check failed: {e}")
 
 
-def _alert_and_fix(app, channel, reason):
-    """Alert Slack and restart the HUD container to restore monitoring."""
+_HUD_CONTAINERS = ["docker-hud-1", "docker-hud-frontend-1"]
+
+
+def _ensure_container_running(name: str) -> tuple[bool, str]:
+    """Ensure a container is running regardless of current state.
+
+    Handles all states that restart:unless-stopped does NOT cover:
+      - created (never started — e.g. interrupted `compose up`): docker start
+      - exited/dead: docker start
+      - running: docker restart (to recover a hung-but-running process)
+
+    Returns (success, action_taken).
+    """
     import subprocess
 
+    try:
+        state = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", name],
+            capture_output=True, text=True, timeout=15
+        )
+        if state.returncode != 0:
+            return False, f"container {name} not found"
+
+        status = state.stdout.strip()
+        # `docker start` is idempotent and works from created/exited/running.
+        # For a running-but-hung container, restart forces a fresh process.
+        action = "restarted" if status == "running" else "started"
+        cmd = ["docker", "restart", name] if status == "running" else ["docker", "start", name]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            log.info(f"Watchdog: {name} {action} (was: {status})")
+            return True, f"{action} (was {status})"
+        # Fallback: if restart failed on a running container, try start
+        if status == "running":
+            fb = subprocess.run(["docker", "start", name], capture_output=True, text=True, timeout=30)
+            if fb.returncode == 0:
+                return True, "started (restart fallback)"
+        log.error(f"Watchdog: failed to recover {name}: {result.stderr}")
+        return False, f"recovery failed: {result.stderr.strip()}"
+    except Exception as e:
+        log.error(f"Watchdog: exception recovering {name}: {e}")
+        return False, f"exception: {e}"
+
+
+def check_hud_containers(app, channel):
+    """Directly verify both HUD containers are running — independent of DB snapshots.
+
+    The snapshot-gap check only detects backend failures (backend writes snapshots).
+    A frontend outage leaves the backend healthy but the HUD inaccessible to users,
+    so we must check container state directly.
+    """
+    import subprocess
+
+    for name in _HUD_CONTAINERS:
+        try:
+            state = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Status}}", name],
+                capture_output=True, text=True, timeout=15
+            )
+            if state.returncode != 0:
+                continue  # container not present on this host
+            status = state.stdout.strip()
+            if status != "running":
+                log.warning(f"Watchdog: HUD container {name} is '{status}' — recovering")
+                ok, action = _ensure_container_running(name)
+                try:
+                    icon = "✅" if ok else "🔴"
+                    app.client.chat_postMessage(
+                        channel=channel,
+                        text=(
+                            f"{icon} *HUD Container Recovery*\n"
+                            f"*Container:* `{name}`\n"
+                            f"*Was:* `{status}`\n"
+                            f"*Action:* {action}"
+                        ),
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            log.error(f"HUD container check failed for {name}: {e}")
+
+
+def _alert_and_fix(app, channel, reason):
+    """Alert Slack and recover BOTH HUD containers to restore monitoring."""
     log.warning(f"Monitoring gap detected: {reason}")
 
     # Alert
@@ -313,24 +398,29 @@ def _alert_and_fix(app, channel, reason):
     except Exception:
         pass
 
-    # Auto-fix: restart HUD container
+    # Auto-fix: recover BOTH HUD containers (backend + frontend).
+    # Uses _ensure_container_running which handles created/exited/running states —
+    # not just `docker restart` (which fails on a never-started container).
+    results = []
+    for name in _HUD_CONTAINERS:
+        ok, action = _ensure_container_running(name)
+        results.append((name, ok, action))
+
+    all_ok = all(ok for _, ok, _ in results)
+    summary = "\n".join(
+        f"{'✅' if ok else '🔴'} `{name}`: {action}" for name, ok, action in results
+    )
     try:
-        result = subprocess.run(
-            ["docker", "restart", "docker-hud-1"],
-            capture_output=True, text=True, timeout=30
+        app.client.chat_postMessage(
+            channel=channel,
+            text=(
+                ("✅ *HUD recovered.*" if all_ok else "⚠️ *HUD partial recovery.*")
+                + " Monitoring should resume within 5 minutes.\n"
+                + summary
+            ),
         )
-        if result.returncode == 0:
-            try:
-                app.client.chat_postMessage(
-                    channel=channel,
-                    text="✅ HUD container restarted. Monitoring should resume within 5 minutes.",
-                )
-            except Exception:
-                pass
-        else:
-            log.error(f"HUD restart failed: {result.stderr}")
-    except Exception as e:
-        log.error(f"Auto-fix failed: {e}")
+    except Exception:
+        pass
 
 
 # ── Change Window Management (SRE Oversight) ─────────────────────────────────
