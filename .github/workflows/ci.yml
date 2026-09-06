@@ -83,16 +83,7 @@ jobs:
             Kiro/Projects/kiro-agents/integrations/ \
             Kiro/Projects/kiro-agents/scripts/ \
             Kiro/Projects/kiro-agents/AI/ \
-            --ignore \
-              E501,F401,\
-              BLE001,S110,S112,\
-              RUF013,RUF012,\
-              TRY002,\
-              PLW1510,PLW0602,\
-              EXE001,\
-              DTZ003,DTZ005,\
-              SIM102,SIM117,\
-              RUF013 \
+            --ignore E501,F401,BLE001,S110,S112,RUF013,RUF012,TRY002,PLW1510,PLW0602,EXE001,DTZ003,DTZ005,SIM102,SIM117 \
             --output-format github
 
   # ── 5. Run existing tests ───────────────────────────────────────────────────
@@ -126,9 +117,10 @@ jobs:
     name: Notify on failure
     runs-on: ubuntu-latest
     needs: [nginx-validate, compose-validate, yaml-validate, python-lint, test]
-    if: failure() && github.ref == 'refs/heads/main' && secrets.SLACK_WEBHOOK_URL != ''
+    if: failure() && github.ref == 'refs/heads/main'
     steps:
       - name: Slack notification
+        continue-on-error: true
         uses: slackapi/slack-github-action@v1.26.0
         with:
           payload: |
