@@ -123,14 +123,22 @@ def check_secret_leaks_in_logs() -> list[str]:
 
 def check_fail2ban_bans() -> list[str]:
     violations = []
+    # Read the fail2ban SQLite DB directly instead of `docker exec fail2ban-client`,
+    # which can block on the host-networked, iptables-manipulating container.
+    db_path = BASE_DIR / "docker" / "fail2ban" / "db" / "fail2ban.sqlite3"
     try:
-        result = subprocess.run(["docker", "exec", "docker-fail2ban-1", "fail2ban-client", "status"], capture_output=True, text=True, timeout=10)
-        if result.stdout:
-            import re
-            bans = re.findall(r"Currently banned:\s+(\d+)", result.stdout)
-            total = sum(int(b) for b in bans)
-            if total > MAX_FAILED_BANS:
-                violations.append(f"Excessive bans: {total} IPs currently banned (threshold: {MAX_FAILED_BANS})")
+        import sqlite3
+        if not db_path.exists():
+            return violations
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5)
+        try:
+            # bans table holds one row per active ban; count currently-active bans
+            cur = conn.execute("SELECT COUNT(*) FROM bans")
+            total = cur.fetchone()[0]
+        finally:
+            conn.close()
+        if total > MAX_FAILED_BANS:
+            violations.append(f"Excessive bans: {total} IPs currently banned (threshold: {MAX_FAILED_BANS})")
     except Exception:
         pass
     return violations
@@ -147,11 +155,15 @@ def run_checks() -> list[str]:
 def main():
     daemon = "--daemon" in sys.argv
     interval = 60  # seconds between checks
+    heartbeat_interval = 900  # log a heartbeat every 15 min so "healthy + quiet" is observable
+    last_heartbeat = 0.0
+    checks_run = 0
 
     log("Security watchdog started" + (" (daemon mode)" if daemon else ""))
 
     while True:
         violations = run_checks()
+        checks_run += 1
 
         if violations:
             now = time.time()
@@ -182,6 +194,12 @@ def main():
 
         if not daemon:
             break
+
+        # Heartbeat: prove the daemon is alive and scanning even when clean.
+        now = time.time()
+        if now - last_heartbeat >= heartbeat_interval:
+            log(f"💓 heartbeat — {checks_run} checks run, {len(violations)} active violation(s)")
+            last_heartbeat = now
 
         time.sleep(interval)
 
