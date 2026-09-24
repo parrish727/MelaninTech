@@ -303,6 +303,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/melanintech.conf:/etc/nginx/conf.d/melanintech.conf:ro
       - ./nginx/orthoflow.conf:/etc/nginx/conf.d/orthoflow.conf:ro
       - ./nginx/brochure.conf:/etc/nginx/conf.d/brochure.conf:ro
@@ -313,6 +314,7 @@ services:
       - ./nginx/secrets.conf:/etc/nginx/conf.d/secrets.conf:ro
       - ./nginx/proxy_params:/etc/nginx/proxy_params:ro
       - ./nginx/parcelpro-brochure:/var/www/parcelpro-brochure:ro
+      - nginx-logs:/var/log/nginx
       - certbot-www:/var/www/certbot:ro
       - certbot-certs:/etc/letsencrypt:ro
     networks:
@@ -395,7 +397,8 @@ services:
       - NET_RAW
     volumes:
       - ./fail2ban:/data
-      - /var/log:/var/log:ro
+      - nginx-logs:/var/log/nginx:ro
+      - /var/log:/var/log/host:ro
     environment:
       - TZ=America/New_York
       - F2B_LOG_LEVEL=INFO
@@ -429,6 +432,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/scripts:/app/scripts:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/logs:/app/logs
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker/fail2ban/db:/app/docker/fail2ban/db:ro
     group_add:
       - "0"
     restart: unless-stopped
@@ -818,6 +822,7 @@ volumes:
   playwright_screenshots:
   certbot-www:
   certbot-certs:
+  nginx-logs:
   searxng-data:
   chromadb-data:
   ntfy-cache:
