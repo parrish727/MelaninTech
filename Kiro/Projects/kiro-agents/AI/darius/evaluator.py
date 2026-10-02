@@ -27,6 +27,12 @@ logger = logging.getLogger("darius.evaluator")
 
 _MODEL_EVAL = os.environ.get("DARIUS_MODEL_EVAL", "anthropic/claude-sonnet-4-6")
 _API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def _eval_resolved():
+    """Resolve the eval-tier model via the shared provider router."""
+    from AI.darius.provider_router import resolve
+    return resolve("eval")
 _SLACK_CHANNEL = os.environ.get("SLACK_CHANNEL_ID", "")
 _SLACK_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 
@@ -189,8 +195,7 @@ def _llm_evaluate(task: str, output: str) -> dict | None:
         truncated_output = output[:4000] if len(output) > 4000 else output
 
         response = completion(
-            model=_MODEL_EVAL,
-            api_key=_API_KEY,
+            **_eval_resolved().completion_kwargs(),
             messages=[
                 {"role": "system", "content": get_evaluation_prompt(classify_task(task))},
                 {"role": "user", "content": f"TASK:\n{task}\n\nAGENT OUTPUT:\n{truncated_output}"},

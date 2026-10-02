@@ -13,8 +13,9 @@ import logging
 import os
 import time
 
-from AI.darius.swarm.memory import SharedMemory
 from litellm import completion
+
+from AI.darius.swarm.memory import SharedMemory
 
 logger = logging.getLogger("darius.swarm.agent")
 
@@ -88,10 +89,13 @@ class SwarmAgent:
 
         # Execute
         try:
+            from AI.darius.provider_router import resolve
+            _r = resolve(self.model_tier)
+            self.model = _r.model  # reflect the actually-served model in traces
+            self.provider = _r.provider
             kwargs = {
-                "model": self.model,
+                **_r.completion_kwargs(),
                 "messages": messages,
-                "api_key": _API_KEY,
                 "max_tokens": 4096,
             }
             if "sonnet-5" not in self.model and "opus-4-7" not in self.model:

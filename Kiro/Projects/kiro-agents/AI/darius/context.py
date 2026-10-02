@@ -217,9 +217,9 @@ def maybe_compress(session_id: str):
 
     # Compress via LLM
     try:
+        from AI.darius.provider_router import resolve
         response = completion(
-            model=_MODEL_COMPRESS,
-            api_key=_API_KEY,
+            **resolve("compress").completion_kwargs(),
             messages=[
                 {"role": "system", "content": COMPRESSION_PROMPT},
                 {"role": "user", "content": text},

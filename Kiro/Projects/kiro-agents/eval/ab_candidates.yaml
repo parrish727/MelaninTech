@@ -1,0 +1,87 @@
+# A/B Model Parity — Candidate Roster
+#
+# Defines the Claude baseline plus every cutover candidate to score against it.
+# Consumed by scripts/ab_eval.py and scripts/system_one_eval.py.
+#
+# provider:
+#   anthropic   — direct Anthropic API   (needs ANTHROPIC_API_KEY) — baseline
+#   llmgateway  — self-hosted open-source LLMGateway (OpenAI-compatible). THE
+#                 production front door for every model: hosted open-weights
+#                 (Mistral, Alibaba/Qwen, Moonshot/Kimi) via our OWN keys, AND
+#                 self-hosted local models (Hermes/Qwen3/Mistral-small) via a
+#                 custom Ollama upstream registered in the gateway
+#                 ("ollama-local" -> http://ollama:11434/v1).
+#                 (needs LLMGATEWAY_URL reachable + LLMGATEWAY_API_KEY)
+#   ollama      — DIRECT local Ollama, bypassing the gateway. Kept ONLY for
+#                 offline/baseline measurement (e.g. "raw model" vs "through
+#                 gateway") and for runs before the gateway is deployed. Darius
+#                 production traffic does NOT use this path — it goes via llmgateway.
+#   mock        — deterministic canned responses (no network; for self-test)
+#
+# NOTE: OpenRouter (closed SaaS) is intentionally NOT a provider. The open-weight
+# path is our self-hosted LLMGateway so the whole process stays open-source.
+# Unified rule: in production, EVERYTHING routes through LLMGateway — including
+# local Ollama models — so there is one front door and one cost/latency ledger.
+#
+# model: the id the provider expects. For llmgateway, use the gateway's model
+# slug (hosted: e.g. mistralai/mistral-large; local via custom upstream:
+# ollama-local/<model>).
+
+# The baseline every candidate is measured against. Must be exactly one entry.
+baseline:
+  name: claude-sonnet-4-6
+  provider: anthropic
+  model: claude-sonnet-4-6
+
+candidates:
+  # ── Local (Ollama) — on-box open-weights (today / once GPU situated) ──
+  - name: qwen3-14b-local
+    provider: ollama
+    model: qwen3:14b
+    tier: light
+    notes: "Local light model — routing/classification/simple Q&A"
+
+  - name: mistral-small-24b-local
+    provider: ollama
+    model: mistral-small:24b
+    tier: heavy
+    notes: "Local heavy model — code/analysis"
+
+  # ── Frontier open-weights via self-hosted LLMGateway (our own keys) ──
+  - name: qwen-2.5-72b-gateway
+    provider: llmgateway
+    model: qwen/qwen-2.5-72b-instruct
+    tier: heavy
+    notes: "Frontier Qwen via LLMGateway (Alibaba key)"
+
+  - name: mistral-large-gateway
+    provider: llmgateway
+    model: mistralai/mistral-large
+    tier: heavy
+    notes: "Frontier Mistral via LLMGateway (Mistral key)"
+
+  - name: kimi-k2-gateway
+    provider: llmgateway
+    model: moonshotai/kimi-k2
+    tier: heavy
+    notes: "Kimi (Moonshot) via LLMGateway (Moonshot key)"
+
+  # ── Hermes (local Ollama) — routed THROUGH LLMGateway for a unified front door ──
+  # Darius/evals call the gateway; the gateway forwards to our self-hosted Ollama
+  # registered as a custom OpenAI-compatible provider ("ollama-local" ->
+  # http://ollama:11434/v1). Model stays local (self-hosted, no provider key),
+  # but all traffic + cost/latency analytics flow through LLMGateway like the rest.
+  # Setup: in the LLMGateway UI add a custom provider name=ollama-local,
+  # baseUrl=http://ollama:11434/v1, customModelsOnly=true, model hermes3:8b.
+  # 8B runs on the current CPU box; bump to hermes3:70b once GPU is available.
+  - name: hermes3-8b-gateway
+    provider: llmgateway
+    model: ollama-local/hermes3:8b
+    tier: light
+    notes: "Nous Hermes 3 (8B) — self-hosted Ollama, routed through LLMGateway"
+
+# The model used to judge response quality (LLM-as-judge). Kept on Claude Haiku
+# so scoring is consistent with the existing eval_runner and drift_detector.
+judge:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001

@@ -19,9 +19,10 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from litellm import completion
+
 from AI.darius.swarm.agent import SwarmAgent
 from AI.darius.swarm.memory import SharedMemory
-from litellm import completion
 
 logger = logging.getLogger("darius.swarm.coordinator")
 
@@ -29,6 +30,12 @@ _API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 _MODEL_COORDINATOR = os.environ.get("DARIUS_MODEL_HEAVY", "anthropic/claude-sonnet-5")
 _MODEL_LIGHT = os.environ.get("DARIUS_MODEL_LIGHT", "anthropic/claude-haiku-4-5-20251001")
 _MAX_WORKERS = int(os.environ.get("SWARM_MAX_WORKERS", "4"))
+
+
+def _coordinator_resolved():
+    """Resolve the coordinator/decomposition model via the shared router (plan tier)."""
+    from AI.darius.provider_router import resolve
+    return resolve("plan")
 
 DECOMPOSITION_PROMPT = """You are a task coordinator. Decompose the user's task into parallel sub-tasks that can be assigned to specialist agents.
 
@@ -124,12 +131,11 @@ class AgentSwarm:
         try:
             # Some newer models (Sonnet 5) don't accept temperature
             kwargs = {
-                "model": _MODEL_COORDINATOR,
+                **_coordinator_resolved().completion_kwargs(),
                 "messages": [
                     {"role": "system", "content": DECOMPOSITION_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                "api_key": _API_KEY,
                 "max_tokens": 2048,
             }
             # Only pass temperature for models that support it

@@ -22,6 +22,12 @@ logger = logging.getLogger("darius.swarm.refiner")
 
 _API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 _MODEL = "anthropic/claude-sonnet-4-6"  # Use proven model for refinement proposals
+
+
+def _refiner_resolved():
+    """Resolve the refinement model via the shared provider router (eval tier)."""
+    from AI.darius.provider_router import resolve
+    return resolve("eval")
 _SKILLS_DIR = Path(os.environ.get("SKILLS_DIR", "/app/agents/skills"))
 _TEMPLATES_DIR = Path(os.environ.get("TEMPLATES_DIR", "/app/AI/darius/swarm/templates"))
 
@@ -138,12 +144,11 @@ Current skill file ({skill_file}):
 Propose a minimal change to prevent this failure pattern."""
 
             response = completion(
-                model=_MODEL,
+                **_refiner_resolved().completion_kwargs(),
                 messages=[
                     {"role": "system", "content": REFINEMENT_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                api_key=_API_KEY,
                 max_tokens=1024,
                 temperature=0.3,
             )

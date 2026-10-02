@@ -3,9 +3,10 @@ import os
 
 from fastapi import FastAPI, HTTPException
 
-# OpenRouter uses the OpenAI SDK with a custom base URL.
-# Set LLM_PROVIDER=openrouter in .env to use OpenRouter.
-# Set LLM_PROVIDER=anthropic (default) to keep using Claude directly.
+# LLMGateway (self-hosted, open-source) uses the OpenAI SDK with a custom base URL.
+# Set LLM_PROVIDER=llmgateway in .env to route open-weight models through our
+# self-hosted gateway (OUR OWN provider keys). Set LLM_PROVIDER=anthropic
+# (default) to keep using Claude directly. OpenRouter (closed SaaS) is NOT used.
 
 _PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")
 _PROJECTS_BASE = os.environ.get("PROJECTS_BASE", "/app/Projects")
@@ -78,7 +79,10 @@ Output ONLY fenced code blocks with file paths. One block per file. No prose.
 """
 
 def _guard_model(model: str):
-    if model.startswith("openai/"):
+    # Block real OpenAI usage. The `openai/<model>` form is ALSO how litellm
+    # addresses our self-hosted, OpenAI-compatible LLMGateway — that is approved,
+    # so only reject `openai/` when we are NOT routing through the gateway.
+    if model.startswith("openai/") and _PROVIDER != "llmgateway":
         raise ValueError(f"OpenAI models are not approved. Got: {model}")
 
 def _guard_path(path: str):
@@ -205,11 +209,11 @@ def fetch_mcp_context(agent_name: str, project: str) -> str:
 
     return "\n\n".join(context_parts)
 
-if _PROVIDER == "openrouter":
+if _PROVIDER == "llmgateway":
     from openai import OpenAI
     _client = OpenAI(
-        api_key=os.environ["OPENROUTER_API_KEY"],
-        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ.get("LLMGATEWAY_API_KEY", ""),
+        base_url=os.environ.get("LLMGATEWAY_URL", "http://llmgateway:4001/v1"),
     )
 else:
     import anthropic as _anthropic
@@ -218,13 +222,14 @@ else:
 
 def select_model(task_text: str) -> str:
     task_lower = task_text.lower()
-    if _PROVIDER == "openrouter":
+    if _PROVIDER == "llmgateway":
+        # Open-weight models served by the self-hosted gateway (our own keys).
         if any(k in task_lower for k in ["architect", "design", "refactor", "optimize", "review", "analyze"]):
-            model = os.environ.get("MODEL_HEAVY", "anthropic/claude-opus-4-5")
+            model = os.environ.get("MODEL_HEAVY", "qwen/qwen-2.5-72b-instruct")
         elif any(k in task_lower for k in ["rename", "move", "delete", "list", "read", "simple", "quick"]):
-            model = os.environ.get("MODEL_LIGHT", "anthropic/claude-haiku-4-5")
+            model = os.environ.get("MODEL_LIGHT", "mistralai/mistral-small")
         else:
-            model = os.environ.get("MODEL_DEFAULT", "anthropic/claude-sonnet-4-5")
+            model = os.environ.get("MODEL_DEFAULT", "mistralai/mistral-large")
     else:
         # Tiered model selection — matches Darius's routing logic
         if any(k in task_lower for k in ["architect", "redesign entire", "system design", "migration strategy"]):
@@ -286,7 +291,7 @@ def _complete(model: str, system_prompt: str, task_text: str, max_tokens: int = 
     status = "success"
 
     try:
-        if _PROVIDER == "openrouter":
+        if _PROVIDER == "llmgateway":
             response = _client.chat.completions.create(
                 model=model,
                 max_tokens=max_tokens,

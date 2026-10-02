@@ -114,13 +114,20 @@ def plan_task(task: str, project: str = "default") -> list[dict]:
     # Complex task — use LLM to plan
     start = time.time()
     try:
+        from AI.darius.provider_router import resolve
+        _r = resolve("plan")
+        # cache_control is Anthropic-only; use the structured form there, a plain
+        # system string everywhere else (LLMGateway/OpenAI-compatible endpoints reject cache_control).
+        if _r.supports_prompt_cache():
+            system_msg = {"role": "system", "content": [
+                {"type": "text", "text": PLANNING_PROMPT, "cache_control": {"type": "ephemeral"}},
+            ]}
+        else:
+            system_msg = {"role": "system", "content": PLANNING_PROMPT}
         response = completion(
-            model=_MODEL_PLAN,
-            api_key=_API_KEY,
+            **_r.completion_kwargs(),
             messages=[
-                {"role": "system", "content": [
-                    {"type": "text", "text": PLANNING_PROMPT, "cache_control": {"type": "ephemeral"}},
-                ]},
+                system_msg,
                 {"role": "user", "content": f"Project: {project}\n\nTask: {task}"},
             ],
             max_tokens=2048,

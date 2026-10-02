@@ -17,17 +17,21 @@ import os
 import time
 import uuid
 
+from smolagents import LiteLLMModel, ToolCallingAgent
+
 from AI.darius.context import build_context, maybe_compress
 from AI.darius.evaluator import EvaluatorTool
 from AI.darius.executor import execute_dag, format_dag_results
 from AI.darius.memory import log_trace
 from AI.darius.planner import PlannerTool, plan_task
+from AI.darius.system_one.service import SystemOneTool
 from AI.darius.tools import ALL_TOOLS
-from smolagents import LiteLLMModel, ToolCallingAgent
 
 logging.getLogger("smolagents").setLevel(logging.ERROR)
 logging.getLogger("litellm").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
+
+logger = logging.getLogger("darius.agent")
 
 # ── Cloud Models (Anthropic Claude — production) ──────────────────────────────
 # Tiered model selection: task complexity → appropriate model
@@ -156,6 +160,20 @@ if _DARIUS_STEERING:
 
 # Register new tools alongside existing ones
 _ALL_TOOLS = ALL_TOOLS + [PlannerTool(), EvaluatorTool()]
+if SystemOneTool is not None:
+    _ALL_TOOLS = _ALL_TOOLS + [SystemOneTool()]
+
+
+def _label_to_tier(label: str) -> str:
+    """Map a _select_model cloud label to a logical provider-router tier."""
+    l = (label or "").lower()
+    if "opus" in l:
+        return "apex"
+    if "sonnet-5" in l:
+        return "heavy"
+    if "haiku" in l:
+        return "light"
+    return "default"
 
 
 def build_agent(task: str = "", model_source: str = None, model_override: str = None) -> tuple[ToolCallingAgent, str]:
@@ -172,14 +190,30 @@ def build_agent(task: str = "", model_source: str = None, model_override: str = 
     model_id, model_label = _select_model(task, model_source, model_override)
 
     if model_source == "local":
-        # LiteLLM handles ollama/ prefix — needs api_base for routing
+        # Explicit local request — LiteLLM handles ollama/ prefix, needs api_base.
         model = LiteLLMModel(
             model_id=model_id,
             api_base=_OLLAMA_URL,
             api_key="ollama",  # LiteLLM requires a non-empty key
         )
     else:
-        model = LiteLLMModel(model_id=model_id, api_key=_API_KEY)
+        # Consult the shared provider router. Default source is Anthropic (keeps
+        # today's behavior + learning); DARIUS_MODEL_SOURCE=llmgateway|local flips
+        # the whole pipeline. A chosen tier maps to a concrete open/closed model.
+        from AI.darius.provider_router import active_source, resolve
+        if active_source() == "anthropic":
+            model = LiteLLMModel(model_id=model_id, api_key=_API_KEY)
+        else:
+            # Map the picked cloud tier label back to a logical tier for the router.
+            _tier = _label_to_tier(model_label)
+            r = resolve(_tier)
+            _kw = {"model_id": r.model}
+            if r.api_key:
+                _kw["api_key"] = r.api_key
+            if r.api_base:
+                _kw["api_base"] = r.api_base
+            model = LiteLLMModel(**_kw)
+            model_label = r.label  # trace the actually-served model
 
     agent = ToolCallingAgent(
         tools=_ALL_TOOLS,
@@ -283,6 +317,49 @@ def run_task(task: str, session_id: str = None, model_source: str = None, model_
                     raise
 
         result = str(result)
+
+        # Confidence-based Anthropic fallback (quality safeguard): if this task
+        # ran on an open-weight / gateway model and the evaluator scores it below
+        # the configured threshold, re-run on Anthropic so customer-facing output
+        # never drops below the quality bar we set on Claude. Anthropic responses
+        # never trigger this. Best-effort: any failure leaves the original result.
+        try:
+            from AI.darius.provider_router import (
+                active_source,
+                confidence_fallback_threshold,
+                should_confidence_fallback,
+            )
+            _resolved_provider = {
+                "llmgateway": "llmgateway", "local": "local",
+            }.get(active_source(), "anthropic")
+            if _resolved_provider != "anthropic" and actual_source != "local":
+                from AI.darius.evaluator import evaluate_output
+                _eval = evaluate_output(task=task, output=result, task_id=task_id, step_index=0)
+                if should_confidence_fallback(_resolved_provider, _eval.get("score")):
+                    log_trace(
+                        task_id=task_id, phase="fallback", session_id=session_id,
+                        tool_name="confidence_router",
+                        tool_args={"score": _eval.get("score"),
+                                   "threshold": confidence_fallback_threshold(),
+                                   "from_provider": _resolved_provider},
+                        tool_result=f"Open-weight score {_eval.get('score')} < threshold — re-running on Anthropic",
+                        status="warning",
+                    )
+                    # Force Anthropic by temporarily overriding the source.
+                    _prev = os.environ.get("DARIUS_MODEL_SOURCE")
+                    os.environ["DARIUS_MODEL_SOURCE"] = "anthropic"
+                    try:
+                        anthropic_agent, anthropic_label = build_agent(
+                            task, model_source=None, model_override=model_override)
+                        result = str(anthropic_agent.run(enriched_task))
+                        model_label = f"{anthropic_label} (confidence-fallback)"
+                    finally:
+                        if _prev is None:
+                            os.environ.pop("DARIUS_MODEL_SOURCE", None)
+                        else:
+                            os.environ["DARIUS_MODEL_SOURCE"] = _prev
+        except Exception as _fb_err:
+            logger.warning(f"Confidence fallback skipped: {_fb_err}")
     else:
         # Multi-step plan — execute via DAG engine
         dag_results = execute_dag(

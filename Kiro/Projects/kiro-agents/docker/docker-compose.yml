@@ -95,7 +95,7 @@ services:
       - OLLAMA_KEEP_ALIVE=5m
       - OLLAMA_NUM_PARALLEL=1
       - OLLAMA_MAX_LOADED_MODELS=1
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull nomic-embed-text && ollama pull mistral-small:24b && ollama pull qwen3:14b && wait"]
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull nomic-embed-text && ollama pull mistral-small:24b && ollama pull qwen3:14b && ollama pull hermes3:8b && wait"]
 
   orchestrator:
     build:
@@ -470,6 +470,31 @@ services:
     group_add:
       - "0"
 
+  # Security-Compliance Agent — always-on sensor/executor; routes analysis to Darius.
+  # Enforces governance/*.md guardrails. Autonomous allowlist: ban_ip/restart_container/
+  # seal_endpoint (self-healing); everything else propose-only via Slack approval.
+  security-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.security_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: false
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
+      - DARIUS_URL=http://darius-agent:8000
+      - GOVERNANCE_DIR=/app/governance
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/governance:/app/governance:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
+    group_add:
+      - "0"
+    depends_on:
+      - darius-agent
+
   dba-agent:
     <<: *agent-base
     command: ["python", "-m", "uvicorn", "agents.dba_agent:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -637,6 +662,13 @@ services:
       - DARIUS_MODEL=anthropic/claude-sonnet-4-6
       - REDIS_URL=redis://redis:6379/0
       - OLLAMA_URL=http://ollama:11434
+      # Model source: anthropic (default/learning) | llmgateway | local.
+      # Flip to llmgateway to route open-weight (Qwen/Mistral/Hermes) via the gateway.
+      - DARIUS_MODEL_SOURCE=${DARIUS_MODEL_SOURCE:-anthropic}
+      - LLMGATEWAY_URL=http://llmgateway:4001/v1
+      - LLMGATEWAY_API_KEY=${LLMGATEWAY_API_KEY}
+      # Confidence gate: open-weight responses scoring below this re-run on Anthropic.
+      - DARIUS_CONFIDENCE_FALLBACK=0.90
       - DARIUS_AUTONOMOUS=true
       - STEERING_DIR=/app/.kiro/steering
       - PROFILES_DIR=/app/.kiro/agents/profiles
@@ -651,6 +683,51 @@ services:
       - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/_registry.json:/app/_registry.json:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/_models.json:/app/_models.json:ro
+    restart: unless-stopped
+
+  # ── LLMGateway — unified LLM gateway (all Darius LLM calls route through here) ──
+  # Self-hosted open-source gateway (theopenco/llmgateway, AGPLv3 core). Holds our
+  # own provider keys, routes to Qwen/Mistral/Hermes + Anthropic, and provides
+  # unified cost/latency/usage analytics. Darius points DARIUS_MODEL_SOURCE=llmgateway
+  # at http://llmgateway:4001/v1. Error-based provider fail-over is handled HERE;
+  # confidence-based (<90% eval) fallback to Anthropic is handled in Darius.
+  # NOTE: Enterprise (ee/) features need a commercial license — tracked for later
+  # (see ops ticket). We only use the AGPL core.
+  llmgateway:
+    image: ghcr.io/theopenco/llmgateway-unified:latest
+    env_file: ../.env
+    environment:
+      # Core secrets (set real values in ../.env — never commit)
+      - AUTH_SECRET=${LLMGATEWAY_AUTH_SECRET}
+      - GATEWAY_API_KEY_HASH_SECRET=${LLMGATEWAY_API_KEY_HASH_SECRET}
+      - POSTGRES_PASSWORD=${LLMGATEWAY_POSTGRES_PASSWORD}
+      # Provider keys — Darius's open-weight + Anthropic fleet routes through these
+      - LLM_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_MISTRAL_API_KEY=${LLM_MISTRAL_API_KEY}
+      - LLM_MOONSHOT_API_KEY=${LLM_MOONSHOT_API_KEY}
+      - LLM_ALIBABA_API_KEY=${LLM_ALIBABA_API_KEY}
+      - LLM_TOGETHER_AI_API_KEY=${LLM_TOGETHER_AI_API_KEY}
+      # Self-host URLs (internal only)
+      - API_URL=http://llmgateway:4002
+      - API_BACKEND_URL=http://llmgateway:4002
+    ports:
+      # Gateway (OpenAI-compatible) — the only port Darius needs. UI/API ports
+      # bound to localhost only (not exposed to the network broadly).
+      - "127.0.0.1:4001:4001"
+      - "127.0.0.1:4002:4002"
+      - "127.0.0.1:3002:3002"
+    networks:
+      - agent-net
+    volumes:
+      - llmgateway_postgres:/var/lib/postgresql/data
+      - llmgateway_redis:/var/lib/redis
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     restart: unless-stopped
 
   # --- Utility Agents ---
@@ -829,3 +906,5 @@ volumes:
   odysseus-data:
   vaultwarden-data:
   tempo_data:
+  llmgateway_postgres:
+  llmgateway_redis:

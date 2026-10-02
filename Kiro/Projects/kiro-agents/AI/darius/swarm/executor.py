@@ -22,8 +22,9 @@ import os
 import time
 import uuid
 
-from AI.darius.swarm.memory import SharedMemory
 from litellm import completion
+
+from AI.darius.swarm.memory import SharedMemory
 
 logger = logging.getLogger("darius.swarm.executor")
 
@@ -231,13 +232,16 @@ class DeltaExecutor:
         messages.append({"role": "user", "content": prompt})
 
         try:
+            from AI.darius.provider_router import resolve
+            # Map the requested concrete model to a logical tier, then resolve.
+            _tier = "light" if ("haiku" in model or "small" in model) else "heavy"
+            _r = resolve(_tier)
             kwargs = {
-                "model": model,
+                **_r.completion_kwargs(),
                 "messages": messages,
-                "api_key": _API_KEY,
                 "max_tokens": max_tokens,
             }
-            if "sonnet-5" not in model and "opus-4-7" not in model:
+            if "sonnet-5" not in _r.model and "opus-4-7" not in _r.model:
                 kwargs["temperature"] = 0.2
 
             response = completion(**kwargs)

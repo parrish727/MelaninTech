@@ -9,9 +9,10 @@ Endpoints:
 import os
 
 import uvicorn
+from fastapi import FastAPI
+
 from AI.darius.agent import chain_tasks, run_task, run_template
 from AI.darius.memory import list_sessions, load_session
-from fastapi import FastAPI
 
 # Initialize distributed tracing
 try:
@@ -50,13 +51,17 @@ def task(body: dict):
 
     result = run_task(task_text, session_id=session_id, model_source=model_source, model_override=model_override)
 
-    # Determine which model was actually used for the response metadata
+    # Determine which model was actually used for the response metadata.
+    # Reflect the shared provider router so LLMGateway/local switches are visible.
     if model_source == "local":
         model_used = "local/ollama"
-    elif model_override == "light":
-        model_used = "claude-haiku"
     else:
-        model_used = "claude-sonnet-4-6"
+        try:
+            from AI.darius.provider_router import resolve
+            tier = "light" if model_override == "light" else ("heavy" if model_override == "heavy" else "default")
+            model_used = resolve(tier).label
+        except Exception:
+            model_used = "claude-haiku" if model_override == "light" else "claude-sonnet-4-6"
 
     return {
         "agent": "DariusAgent",
@@ -69,6 +74,48 @@ def task(body: dict):
             "proposal": result,
         },
     }
+
+
+@app.post("/system-one")
+@traced("darius.system_one", attributes={"component": "system_one"})
+def system_one(body: dict):
+    """
+    System One typed semantic-decision endpoint (our local System One engine).
+
+    Body (wire format):
+      {
+        "state": <str | object | array>,
+        "questions": [
+          {"id": "...", "type": "claim",   "question": "..."},
+          {"id": "...", "type": "choice", "question": "...", "options": [...]},
+          {"id": "...", "type": "score",  "question": "...", "levels": [...]}
+        ],
+        "provider": "auto" | "mock"   (optional; default auto = Anthropic if key)
+      }
+
+    Returns typed decisions with probability distributions + confidence.
+    """
+    from fastapi import HTTPException
+
+    from AI.darius.system_one.provider import MockProvider
+    from AI.darius.system_one.service import run_system_one
+    from AI.darius.system_one.types import SystemOneValidationError
+
+    provider = None
+    if (body.get("provider") or "auto").lower() == "mock":
+        provider = MockProvider()
+
+    try:
+        result = run_system_one(
+            {"state": body.get("state", ""), "questions": body.get("questions", [])},
+            provider=provider,
+        )
+    except SystemOneValidationError as e:
+        raise HTTPException(status_code=422, detail=f"system_one validation: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"system_one provider error: {e}")
+
+    return {"agent": "DariusAgent", "model": "system-one", "results": result["results"]}
 
 
 @app.post("/chain")
