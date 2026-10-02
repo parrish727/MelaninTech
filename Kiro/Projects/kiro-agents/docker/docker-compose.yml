@@ -431,6 +431,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/scripts:/app/scripts:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/orchestrator:/app/orchestrator:ro
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/logs:/app/logs
       - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker/fail2ban/db:/app/docker/fail2ban/db:ro
     group_add:
@@ -470,6 +471,35 @@ services:
     group_add:
       - "0"
 
+<<<<<<< Updated upstream
+=======
+  # Security-Compliance Agent — always-on sensor/executor; routes analysis to Darius.
+  # Enforces governance/*.md guardrails. Autonomous allowlist: ban_ip/restart_container/
+  # seal_endpoint (self-healing); everything else propose-only via Slack approval.
+  security-agent:
+    <<: *agent-base
+    command: ["python", "-m", "uvicorn", "agents.security_agent:app", "--host", "0.0.0.0", "--port", "8000"]
+    read_only: false
+    environment:
+      - PROJECTS_BASE=/app/Projects
+      - STEERING_DIR=/app/.kiro/steering
+      - PROFILES_DIR=/app/.kiro/agents/profiles
+      - DARIUS_URL=http://darius-agent:8000
+      - GOVERNANCE_DIR=/app/governance
+    volumes:
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects:/app/Projects:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/docker:/app/docker:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/governance:/app/governance:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/Kiro/Projects/kiro-agents/orchestrator:/app/orchestrator:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/steering:/app/.kiro/steering:ro
+      - /Users/pktech_dev/Documents/MelaninTechnologies/.kiro/agents/profiles:/app/.kiro/agents/profiles:ro
+    group_add:
+      - "0"
+    depends_on:
+      - darius-agent
+
+>>>>>>> Stashed changes
   dba-agent:
     <<: *agent-base
     command: ["python", "-m", "uvicorn", "agents.dba_agent:app", "--host", "0.0.0.0", "--port", "8000"]
