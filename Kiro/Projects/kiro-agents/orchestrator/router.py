@@ -165,6 +165,11 @@ def _word_match(keywords: list[str], text: str) -> bool:
 
 
 def _classify(task_lower: str) -> str:
+    # Security-compliance intent wins before darius/sre — the security-agent is the
+    # sensor/executor and routes its own analysis to Darius internally.
+    if _word_match(["security", "compliance", "intrusion", "vulnerability", "vuln", "attacker", "breach", "exploit", "malware", "trojan", "prompt injection", "agent hijack", "credential stuffing", "brute force", "ddos", "secret leak", "secret scan", "harden", "lockdown", "quarantine", "seal endpoint", "guardrail", "cve"], task_lower):
+        return "security"
+
     if _word_match(["darius", "agent loop", "agentic", "multi-step", "autonomously", "figure out", "analyze", "plan", "strategy"], task_lower):
         return "darius"
 

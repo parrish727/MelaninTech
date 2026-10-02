@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,6 +23,7 @@ AGENT_URLS = {
     "sre":      "http://sre-agent:8000",
     "dba":      "http://dba-agent:8000",
     "qa":       "http://qa-agent:8000",
+    "security": "http://security-agent:8000",
     "darius":   "http://darius-agent:8000",
 }
 

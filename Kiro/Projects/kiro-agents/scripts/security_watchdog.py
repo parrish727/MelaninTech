@@ -35,6 +35,8 @@ ALLOWED_SOCKET_CONTAINERS = {
     "docker-deploy-agent-1",       # Deploy agent — builds and restarts app containers
     "docker-sre-agent-1",          # SRE agent — reads container health and logs
     "docker-security-watchdog-1",  # This process — monitors socket access
+    "docker-security-agent-1",     # Security-compliance agent — reads container/socket state
+                                   #   and fail2ban DB for threat classification and containment
     "docker-nginx-reload-1",       # nginx-reload sidecar — watches container start
                                    #   events and signals nginx -s reload via docker exec
     "docker-mcp-gateway-1",        # MCP gateway — Docker tools require socket for container mgmt
