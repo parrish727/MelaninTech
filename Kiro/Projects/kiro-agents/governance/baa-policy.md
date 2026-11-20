@@ -16,11 +16,15 @@ A Business Associate Agreement is a legally required contract under HIPAA (45 CF
 | Clearinghouse (Tesia/DentalXChange) | Us → Sub-processor | We sign their BAA | Before Medicare/Medicaid claims launch |
 | Cloud hosting (AWS/GCP, if migrated) | Us → Sub-processor | We sign their BAA | Before migration |
 | Offsite backup provider | Us → Sub-processor | We sign their BAA | Before enabling offsite backups |
+| Cloudflare (proxy) | Us → Sub-processor or conduit | Determine and document (BAA or conduit position) | Before real PHI flows through app/api.orthoflowsolutions.com |
+| AI provider (Anthropic) | Us → Sub-processor | We sign their BAA, or remove PHI from prompts | Before real PHI reaches any AI feature |
+| SMS provider (Twilio) | Us → Sub-processor | We sign their BAA | Before SMS carries patient-linked content at scale |
+| Plaid / Stedi | Us → Sub-processor | We sign their agreements, confirm BAA scope | Before live patient payments / live claims |
 
 ### Not Required Currently
 
 - **Self-hosted infrastructure** (Mac Pro) — no third-party data handler
-- **Cloudflare** — DNS-only mode, no PHI access (encrypted passthrough)
+- **Cloudflare is NOT DNS-only for OrthoFlow.** `orthoflowsolutions.com`, `www`, `app` and `api` (and `melanin-tech.com`, `www`) are proxied (orange cloud, verified 2026-11-20: Cloudflare IPs and `server: cloudflare`). Cloudflare terminates TLS at its edge and can see traffic, including PHI sent to the OrthoFlow app and API. `hud.melanin-tech.com` is DNS-only (direct to origin). See the table above.
 - **Slack** — no PHI transmitted (enforced by agent-rules.md)
 - **GitHub** — private repos, no PHI in code (enforced by guardrail-check)
 
