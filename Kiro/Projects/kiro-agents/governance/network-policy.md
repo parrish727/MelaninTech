@@ -3,7 +3,7 @@
 ## Architecture
 
 ```
-Internet → Cloudflare (DDNS, no proxy) → Router (port 80/443 forwarded) → nginx
+Internet → Cloudflare (proxied for orthoflowsolutions.com and melanin-tech.com; DNS-only for hud.melanin-tech.com) → Router (port 80/443 forwarded) → nginx
     │
     ├── melanin-tech.com      → production-server:3000
     ├── hud.melanin-tech.com  → hud-frontend:4000 / hud:8080
@@ -54,7 +54,7 @@ Internet → Cloudflare (DDNS, no proxy) → Router (port 80/443 forwarded) → 
 
 - Cloudflare DDNS updates every 5 minutes
 - Domains: melanin-tech.com, www, hud, orthoflowsolutions.com, www, app, api
-- Proxy status: DNS-only (gray cloud) — TLS terminated at origin
+- Proxy status (verified 2026-11-20): proxied (orange cloud) for melanin-tech.com, www, orthoflowsolutions.com, www, app, api. DNS-only (gray cloud) for hud.melanin-tech.com. For proxied hosts TLS terminates at Cloudflare's edge and again at nginx (origin certificate via Let's Encrypt). Cloudflare is the source of truth for DNS and domain security settings.
 
 ## K8s Network Policies (when migrated)
 
